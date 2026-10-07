@@ -3,7 +3,9 @@ import { inferCategory, merchantDefaults, merchantKey, normalizeDigits, parseMon
 const OTP = ["otp", "one time", "one-time", "verification code", "security code", "رمز تحقق", "رمز التحقق", "رمز التأكيد", "رمز التفعيل", "رمز الدخول", "كلمة المرور", "كلمة السر", "password"];
 const DECLINED = ["declined", "rejected", "unsuccessful", "failed", "insufficient", "مرفوضة", "تم رفض", "رفض", "فشلت", "غير ناجحة", "رصيد غير كاف"];
 const REFUND = ["refund", "reversal", "reversed", "استرداد", "استرجاع", "مسترد", "عكس عملية"];
-const CARD_PAYMENT = ["card payment", "credit card payment", "payment to your card", "سداد بطاقة", "تسديد بطاقة", "سداد البطاقة", "تسديد البطاقة", "لبطاقة الائتمان", "لبطاقتك الائتمانية"];
+const CARD_PAYMENT = ["card payment", "credit card payment", "payment to your card", "سداد بطاقة", "تسديد بطاقة", "سداد البطاقة", "تسديد البطاقة", "لبطاقة الائتمان", "لبطاقتك الائتمانية",
+  // دفعة/تعبئة بطاقة من الحساب: تحويل داخلي، والشراء نفسه يجي بإشعار البطاقة
+  "دفعة بطاقة", "دفعه بطاقة", "تعبئة بطاقة", "تعبئه بطاقة", "بطاقة العملات", "دفعة لبطاقة", "دفعة إلى بطاقة", "دفعة الى بطاقة"];
 
 /*
  * صيغ بوبيان المؤكدة من رسائل حقيقية (2026-10-06):
@@ -158,7 +160,7 @@ export function parseBankNotification(raw, { todayISO, fieldOrder = DEFAULT_FIEL
   const text = prepare(raw);
   const lower = text.toLowerCase();
   const base = { raw: String(raw ?? ""), type: "unknown", kind: null, amountFils: null, foreign: null, merchant: "", rawMerchant: "", category: "أخرى",
-    dateISO: todayISO ?? null, dateAssumed: true, time: null, balanceFils: null, cardLast4: null, reference: null,
+    dateISO: todayISO ?? null, dateAssumed: true, time: null, balanceFils: null, cardLast4: null, cardKind: "", reference: null,
     ignored: false, reason: null, needsManual: false };
   if (!text.trim()) return { ...base, needsManual: true, reason: "empty" };
 
@@ -188,7 +190,12 @@ export function parseBankNotification(raw, { todayISO, fieldOrder = DEFAULT_FIEL
     if (pm) hour += 12;
     timeMatch[1] = String(hour);
   }
-  const cardMatch = text.match(/(?:بطاقة|card|visa|mastercard|ماستر)[^\d\n]{0,20}(\d{4,16})(?!\d)/i) ?? text.match(/[*xX•]{2,}\s*(\d{4})(?!\d)/) ?? text.match(/(?:من|إلى|الى)\s+حساب\s+[*xX•]*\d*?(\d{4})(?!\d)/);
+  // آخر ٤ أرقام من آخر الرقم (المخفي مثل 3678******443995 آخره 3995)، ونفرّق بين البطاقة والحساب
+  const accountMatch = text.match(/(?:من|إلى|الى|على)\s+حساب(?:ك)?\s+(?:رقم\s+)?([\d*xX•]{4,24})(?![\d*])/);
+  const cardDigits = text.match(/(?:بطاقة|بطاقتك|card|visa|mastercard|ماستر)[^\d\n]{0,20}([\d*xX•]{4,24})(?![\d*])/i) ?? text.match(/[*xX•]{2,}\s*(\d{4})(?!\d)/);
+  const cardMatch = cardDigits ?? accountMatch;
+  const cardKind = cardDigits ? "card" : accountMatch ? "account" : "";
+  const lastFour = (token) => (String(token).match(/(\d+)(?!.*\d)/)?.[1] ?? "").slice(-4) || null;
   const refMatch = text.match(/(?:reference|ref|auth(?:orization)?(?:\s+code)?|رقم المرجع|المرجع|رقم العملية)\s*(?:no\.?|#)?\s*[:#-]?\s*([A-Za-z0-9]{5,20})/i);
 
   const merchantRaw = findMerchant(withoutBalance, type, fieldOrder);
@@ -198,7 +205,8 @@ export function parseBankNotification(raw, { todayISO, fieldOrder = DEFAULT_FIEL
     dateISO: dateISO ?? todayISO ?? null, dateAssumed: !dateISO,
     time: timeMatch ? `${timeMatch[1].padStart(2, "0")}${timeMatch[2]}` : null,
     balanceFils: balanceFils && balanceFils > 0 ? balanceFils : null,
-    cardLast4: cardMatch ? cardMatch[1].slice(-4) : null,
+    cardLast4: cardMatch ? lastFour(cardMatch[1]) : null,
+    cardKind: cardMatch ? cardKind : "",
     reference: refMatch ? refMatch[1].toUpperCase() : null
   };
   if (!amount) return { ...result, needsManual: true, reason: "no_amount" };
@@ -215,18 +223,24 @@ export function parseBankNotification(raw, { todayISO, fieldOrder = DEFAULT_FIEL
 
 // سطر التاريخ اللي يكتبه الاختصار قبل كل إشعار: ISO أو تنسيق الآيفون الافتراضي (عربي أو إنجليزي).
 const STAMP_TIME = String.raw`(?:[T ,،]*(?:at|الساعة|في)?\s*\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\s*(?:[AaPp]\.?\s?[Mm]\.?|ص|م)?\s*(?:Z|[+-]\d{2}:?\d{2})?)?`;
-const STAMP_DATE = String.raw`(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.]\d{1,2}[/.]\d{2,4}|\d{1,2}\s+[^\s\d,،:]{3,12}\.?,?\s+\d{4}|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4})`;
+const STAMP_DATE = String.raw`(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[/.]\d{1,2}[/.]\d{2,4}|\d{1,2}\s+[^\s\d,،:]{3,12}\.?,?\s+\d{4}|[A-Za-zء-ي]{3,12}\.?\s+\d{1,2},?\s+\d{4})`;
+// اسم اليوم اللي يحطه الآيفون قبل التاريخ («Tuesday, October 6, 2026» أو «الثلاثاء، ٦ أكتوبر ٢٠٢٦»)
+const STAMP_WEEKDAY = /^[A-Za-zء-ي]{3,12}\.?\s*[,،]\s*/;
 const STAMP_LINE = new RegExp(String.raw`^\s*${STAMP_DATE}${STAMP_TIME}\s*$`, "i");
 
 export function parseStampDate(line) {
-  const text = normalizeDigits(String(line ?? "")).trim();
+  const text = normalizeDigits(String(line ?? ""))
+    .replace(/[‎‏؜]/g, "")
+    .trim()
+    .replace(STAMP_WEEKDAY, "")
+    .trim();
   if (!STAMP_LINE.test(text)) return null;
   let y, m, d;
   let match;
-  if ((match = text.match(/^(\d{4})-(\d{2})-(\d{2})/))) [y, m, d] = [match[1], match[2], match[3]].map(Number);
+  if ((match = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/))) [y, m, d] = [match[1], match[2], match[3]].map(Number);
   else if ((match = text.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})/))) [d, m, y] = [Number(match[1]), Number(match[2]), Number(match[3].length === 2 ? `20${match[3]}` : match[3])];
   else if ((match = text.match(/^(\d{1,2})\s+([^\s\d,،:.]+)\.?,?\s+(\d{4})/))) [d, m, y] = [Number(match[1]), MONTHS[match[2].toLowerCase()], Number(match[3])];
-  else if ((match = text.match(/^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})/))) [m, d, y] = [MONTHS[match[1].toLowerCase()], Number(match[2]), Number(match[3])];
+  else if ((match = text.match(/^([A-Za-zء-ي]+)\.?\s+(\d{1,2}),?\s+(\d{4})/))) [m, d, y] = [MONTHS[match[1].toLowerCase()], Number(match[2]), Number(match[3])];
   if (!y || !m || !d) return null;
   const date = new Date(Date.UTC(y, m - 1, d));
   if (date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null;
@@ -239,11 +253,72 @@ const isStampLine = (line) => parseStampDate(line) !== null;
  * يقسم ملف الاختصار إلى إشعارات. سطر التاريخ يبدأ إشعاراً جديداً إذا كان أول الملف، أو بعد سطر فاضي،
  * أو إذا بعده نص فعلي قبل سطر التاريخ اللي يليه (حتى ما ينفصل سطر تاريخ داخل إشعار بوبيان نفسه).
  */
+// سطر فيه إشعار كامل لحاله (مبلغ + تاجر)، مثل إشعارات «خصم من حساب … في @ TAJER». يُستخدم لما يلصق المستخدم إشعارين بدون سطر فاضي.
+const SELF_CONTAINED = new RegExp(String.raw`(?:${KWD}\s*${NUM}|${NUM}\s*${KWD})`, "i");
+function looksSelfContained(line) {
+  const text = line.trim();
+  return text.length >= 24 && SELF_CONTAINED.test(text) && /@|\bat\b|لدى|من\s+حساب|باستخدام|from\s+card|نقاط\s+البيع/i.test(text);
+}
+
+function isBalanceTail(chunk) {
+  const text = chunk.trim();
+  return !looksSelfContained(text) && text.length <= 60 && /الرصيد|رصيد|balance|avail/i.test(text);
+}
+
+// سطر مبلغ لحاله في أول إشعار البطاقة («KWD 5.800» أو «USD 12.99»): يبدأ إشعاراً جديداً لو قبله إشعار فيه مبلغ (F9)
+const CARD_AMOUNT_LINE = /^(?:[A-Z]{3}|KD|د\.ك\.?)\s*[\d,]+(?:\.\d{1,3})?$|^[\d,]+(?:\.\d{1,3})?\s*(?:[A-Z]{3}|KD|د\.ك\.?)$/;
+const KWD_AMOUNT = new RegExp(String.raw`(?:${KWD}\s*${NUM}|${NUM}\s*${KWD})`, "i");
+const FOREIGN_AMOUNT = /\b[A-Z]{3}\s*\d[\d,]*(?:\.\d+)?\b|\b\d[\d,]*(?:\.\d+)?\s*[A-Z]{3}\b/;
+const hasAmount = (chunk) => {
+  const text = normalizeDigits(chunk).replaceAll("٫", ".");
+  return KWD_AMOUNT.test(text) || FOREIGN_AMOUNT.test(text);
+};
+
+function splitRuns(part) {
+  const lines = part.split("\n");
+  const starts = lines.map((line) => looksSelfContained(line) || CARD_AMOUNT_LINE.test(line.trim()));
+  if (starts.filter(Boolean).length < 2) return [part];
+  const runs = [];
+  let current = [];
+  let currentHasAmount = false;
+  lines.forEach((line, index) => {
+    if (starts[index] && currentHasAmount && current.some((item) => item.trim())) { runs.push(current.join("\n")); current = []; currentHasAmount = false; }
+    current.push(line);
+    if (starts[index]) currentHasAmount = true;
+  });
+  runs.push(current.join("\n"));
+  return runs;
+}
+
+/* بعد التقسيم بالأسطر الفاضية: كل إشعار لازم يكون فيه مبلغ واحد. سطر عنوان بلا أرقام («بنك بوبيان»)
+   يلتصق بالإشعار اللي بعده، وتكملة بلا مبلغ (اسم التاجر بعد سطر فاضي أو «الرصيد المتبقي…») تلتصق باللي قبله،
+   فما يطلع جزء ناقص كرسالة «ما تعرفت عليها» (F9). */
+function groupNotifications(chunks) {
+  const groups = [];
+  chunks.forEach((chunk, index) => {
+    const last = groups[groups.length - 1];
+    if (last && isBalanceTail(chunk)) { last.text += `\n${chunk}`; return; }
+    if (hasAmount(chunk)) {
+      if (last && !last.amount) { last.text += `\n${chunk}`; last.amount = true; }
+      else groups.push({ text: chunk, amount: true });
+      return;
+    }
+    const next = chunks[index + 1];
+    const header = chunk.length <= 40 && !/\d/.test(normalizeDigits(chunk)) && next && hasAmount(next);
+    if (last && !last.amount) last.text += `\n${chunk}`;
+    else if (last && !header) last.text += `\n${chunk}`;
+    else groups.push({ text: chunk, amount: false });
+  });
+  return groups.map((group) => group.text);
+}
+
 export function splitBankMessages(raw) {
   const text = String(raw ?? "").replace(/\r\n?/g, "\n").replace(/^﻿/, "");
   const lines = text.split("\n");
   const stamps = lines.map(isStampLine);
-  if (!stamps.some(Boolean)) return text.split(/\n\s*\n+/).map((part) => part.trim()).filter((part) => part.length >= 8);
+  const byBlankLines = (chunk) => groupNotifications(chunk.split(/\n\s*\n+/).map((item) => item.trim()).filter(Boolean))
+    .flatMap(splitRuns).map((item) => item.trim());
+  if (!stamps.some(Boolean)) return byBlankLines(text).filter((part) => part.length >= 8);
   const contentAfter = (i) => {
     let content = "";
     for (let j = i + 1; j < lines.length && !stamps[j]; j += 1) content += lines[j].trim();
@@ -252,15 +327,22 @@ export function splitBankMessages(raw) {
   const parts = [];
   let current = [];
   lines.forEach((line, i) => {
-    const starts = stamps[i] && (i === 0 || !lines[i - 1].trim() || contentAfter(i));
+    // سطر التاريخ يبدأ إشعاراً فقط إذا جاء بعده نص مباشرة؛ وإلا فهو آخر سطر في إشعار البطاقة نفسه.
+    const starts = stamps[i] && (i === 0 || !lines[i - 1].trim() || (Boolean(lines[i + 1]?.trim()) && contentAfter(i)));
     if (starts && current.some((item) => item.trim())) { parts.push(current.join("\n")); current = []; }
     current.push(line);
   });
   parts.push(current.join("\n"));
   return parts.flatMap((part) => {
     const trimmed = part.trim();
-    // جزء بلا سطر تاريخ في أوله (ملف قديم أو لصق) يُقسم بالأسطر الفاضية كالسابق
-    return isStampLine(trimmed.split("\n")[0]) ? [trimmed] : trimmed.split(/\n\s*\n+/).map((item) => item.trim());
+    const partLines = trimmed.split("\n");
+    // جزء بلا سطر تاريخ في أوله (ملف قديم أو لصق) يُقسم بالأسطر الفاضية وبالإشعارات المكتملة
+    if (!isStampLine(partLines[0])) return byBlankLines(trimmed);
+    // الطابع في أول الجزء يخص أول إشعار فقط؛ الباقي يُقسم عادياً وإلا التصق الكل برسالة واحدة
+    // («الرصيد المتبقي …» بعد سطر فاضي تكملة لنفس الإشعار — يتكفل فيها groupNotifications)
+    const chunks = byBlankLines(partLines.slice(1).join("\n")).filter((item) => item.length);
+    if (!chunks.length) return [trimmed];
+    return chunks.map((chunk, index) => (index === 0 ? `${partLines[0]}\n${chunk}` : chunk));
   }).filter((part) => splitStamp(part).body.length >= 8);
 }
 
@@ -272,10 +354,15 @@ export function splitStamp(message) {
   return stampISO ? { stampISO, body: rest.join("\n").trim() } : { stampISO: null, body: text };
 }
 
+/* بصمة الإشعار: الأساس (تاريخ + مبلغ + تاجر) للتشابه، والكاملة تضيف النوع والرصيد بعد العملية والوقت
+   حتى ما ينشال شراءان حقيقيان بنفس المبلغ، أو شراء واسترداده بنفس اليوم. */
 export function notificationFingerprints(notification) {
   const base = `${notification.dateISO}|${notification.amountFils}|${merchantKey(notification.rawMerchant || notification.merchant)}`;
-  const full = notification.reference ? `ref|${notification.reference}` : notification.time ? `${base}|${notification.time}` : base;
-  return { base, full };
+  const distinctive = Boolean(notification.reference || notification.balanceFils || notification.time);
+  const full = notification.reference
+    ? `ref|${notification.reference}`
+    : `${base}|${notification.type ?? ""}|${notification.kind ?? ""}|${notification.balanceFils ?? ""}|${notification.time ?? ""}`;
+  return { base, full, distinctive };
 }
 
 export const NOTIFICATION_REASONS = {

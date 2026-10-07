@@ -5,13 +5,17 @@ import { EXPENSE_CATEGORIES, budgetReport, categoryNudges, mountSpending, monthK
 import { fundGoals, mountSalaryPlan, salaryDue } from "./salary-plan.js";
 import { PIN_PATTERN, backupStatus, createLockRecord, cryptoAvailable, describeBackupAge, hasMeaningfulData, registerFailure, registerSuccess,
   remainingLockMs, sanitizeLockRecord, shouldRelock, verifyPin } from "./safety.js";
-import { GOLD_PRICE_URL, mountGold, priceFromApi, sanitizeGold } from "./gold.js";
+import { GOLD_PRICE_URL, goldSummary, mountGold, priceFromApi, sanitizeGold } from "./gold.js";
 import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, notificationFingerprints, parseBankNotification, splitBankMessages, splitStamp, BANK_FIELDS, DEFAULT_FIELD_ORDER } from "./bank-notifications.js";
 import { parsePortfolioLink, newPortfolioHoldings } from "./portfolio-import.js";
 import {
   categories,
+  countLabel,
+  inferCategory,
   createId,
+  cutText,
   formatMoney,
+  genericMerchantKey,
   investmentProjection,
   merchantDefaults,
   merchantKey,
@@ -19,11 +23,14 @@ import {
   monthKey,
   normalizeDigits,
   parseBankText,
+  parseCount,
   parseMoney,
+  parseRate,
   payoff,
   todayISO
 } from "./finance-core.js";
 import {
+  INSTALLMENT_CATEGORY,
   addDaysISO,
   addMonthsISO,
   answerFinancialQuestion,
@@ -31,22 +38,26 @@ import {
   commitmentRecurrences,
   commitmentSummary,
   createAdvisorAllocation,
+  debtEndDate,
   debtOccurrences,
   debtProgress,
   debtSummary,
   endOfMonthForecast,
   financialFlow,
   generateFinancialAlerts,
+  livingBaseline,
   mergeFinancialAlerts,
   monthBounds,
+  monthlySurplus,
   monthlyCommitmentEquivalent,
   remainingInstallments,
   safeToSpendEngine,
+  sameDueMonth,
   simulateExtraPayment,
   spendingComparison,
   totalMonthlyIncome
 } from "./financial-engine.js";
-import { parseLoanOCRLoans } from "./loan-ocr.js";
+import { parseLoanOCRLoans, scanAmountWarnings } from "./loan-ocr.js";
 import { analyzeSpendingBehavior, parseBankStatement } from "./statement-import.js";
 import {
   KUWAIT_STOCKS_AS_OF,
@@ -78,6 +89,7 @@ function defaultState() {
     monthlyCommitments: [],
     commitmentPayments: [],
     creditCards: [],
+    bankDrafts: [],
     financialAlerts: [],
     financialSnapshots: [],
     statementImport: { coverageStartISO: "", coverageEndISO: "", importedAt: "", importedCount: 0 },
@@ -88,7 +100,7 @@ function defaultState() {
     goldPurchases: [],
     goldPrices: [],
     investment: { initialFils: 0, monthlyFils: 100_000, annualRate: 7, years: 10 },
-    ui: { installDismissed: false, extraFils: 0, initialPortfolioApplied: false, onboarded: false, lastBackupAt: "", backupBaselineAt: "", backupSnoozedUntil: "", goldGramFils: 0, zakatOtherFils: 0, zakatGoldFils: 0, zakatDebtsFils: 0, inflationRate: 2.5, dividends: {}, sectorOverrides: {}, bankSeen: [], bankFieldOrder: ["title", "subtitle", "body"], goldSpreadPct: 3, goldUsdKwd: 0.307 }
+    ui: { installDismissed: false, extraFils: 0, initialPortfolioApplied: false, onboarded: false, lastBackupAt: "", backupBaselineAt: "", backupSnoozedUntil: "", goldGramFils: 0, zakatOtherFils: 0, zakatGoldFils: 0, zakatDebtsFils: 0, inflationRate: 2.5, dividends: {}, sectorOverrides: {}, bankSeen: [], bankSeenUpTo: "", bankFieldOrder: ["title", "subtitle", "body"], goldSpreadPct: 3, goldUsdKwd: 0.307 }
   };
 }
 
@@ -109,8 +121,11 @@ function optionalInteger(value, minimum = 0, maximum = 1_000_000) {
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum ? value : null;
 }
 
+let lastSanitizeStats = { rawTransactions: 0, keptTransactions: 0, cappedTransactions: 0, invalidTransactions: 0 };
+
 function sanitizeState(raw) {
   const clean = defaultState();
+  lastSanitizeStats = { rawTransactions: Array.isArray(raw?.transactions) ? raw.transactions.length : 0, keptTransactions: 0, cappedTransactions: 0, invalidTransactions: 0 };
   if (!raw || typeof raw !== "object") return clean;
   const settings = raw.settings && typeof raw.settings === "object" ? raw.settings : {};
   for (const key of Object.keys(clean.settings)) clean.settings[key] = finiteInteger(settings[key]);
@@ -134,16 +149,21 @@ function sanitizeState(raw) {
     merchant: typeof item?.merchant === "string" ? item.merchant.trim().slice(0, 80) : "غير محدد",
     category: categories.includes(item?.category) ? item.category : "أخرى",
     kind: item?.kind === "income" ? "income" : "expense",
-    date: validDate(item?.date) ? item.date : todayISO(),
+    // تاريخ غير صالح ما يصير «اليوم» بالصمت: السجل يُرفض ويُحتسب في تقرير الاستيراد (F39)
+    date: validDate(item?.date) ? item.date : "",
     reviewed: item?.reviewed !== false,
     source: ["bank-text", "bank-statement"].includes(item?.source) ? item.source : "manual",
     rawMerchant: typeof item?.rawMerchant === "string" ? item.rawMerchant.trim().slice(0, 80) : "",
     fingerprint: typeof item?.fingerprint === "string" ? item.fingerprint.slice(0, 180) : "",
     notifBalanceFils: optionalInteger(item?.notifBalanceFils, 1, 1_000_000_000_000),
     cardLast4: /^\d{4}$/.test(item?.cardLast4 ?? "") ? item.cardLast4 : "",
+    cardKind: ["card", "account"].includes(item?.cardKind) ? item.cardKind : "",
     possibleDuplicate: item?.possibleDuplicate === true,
     createdAt: typeof item?.createdAt === "string" ? item.createdAt : new Date().toISOString()
-  })).filter((item) => item.amountFils > 0 && item.merchant) : [];
+  })).filter((item) => item.amountFils > 0 && item.merchant && item.date) : [];
+  lastSanitizeStats.keptTransactions = clean.transactions.length;
+  lastSanitizeStats.cappedTransactions = Math.max(lastSanitizeStats.rawTransactions - 20_000, 0);
+  lastSanitizeStats.invalidTransactions = Math.max(Math.min(lastSanitizeStats.rawTransactions, 20_000) - clean.transactions.length, 0);
 
   clean.merchantRules = Array.isArray(raw.merchantRules) ? raw.merchantRules.slice(0, 500).map((item) => ({
     key: typeof item?.key === "string" ? item.key.trim().slice(0, 80) : "",
@@ -199,14 +219,27 @@ function sanitizeState(raw) {
   clean.commitmentPayments = Array.isArray(raw.commitmentPayments) ? raw.commitmentPayments.slice(0, 20_000).map((item) => ({
     id: typeof item?.id === "string" ? item.id.slice(0, 100) : createId(),
     commitmentId: typeof item?.commitmentId === "string" ? item.commitmentId.slice(0, 100) : "",
-    amountFils: finiteInteger(item?.amountFils), dueDate: optionalDate(item?.dueDate), paidAt: optionalDate(item?.paidAt), status: item?.status === "reversed" ? "reversed" : "paid"
+    amountFils: finiteInteger(item?.amountFils), dueDate: optionalDate(item?.dueDate), paidAt: optionalDate(item?.paidAt), status: item?.status === "reversed" ? "reversed" : "paid",
+    cashDeducted: item?.cashDeducted === true
   })).filter((item) => item.commitmentId && item.dueDate && item.amountFils > 0) : [];
 
   clean.creditCards = Array.isArray(raw.creditCards) ? raw.creditCards.slice(0, 50).map((item) => ({
     id: typeof item?.id === "string" ? item.id.slice(0, 100) : createId(),
     name: typeof item?.name === "string" ? item.name.trim().slice(0, 60) : "بطاقة ائتمان",
     reservedPaymentFils: finiteInteger(item?.reservedPaymentFils), status: item?.status === "paused" ? "paused" : "active"
-  })).filter((item) => item.name && item.reservedPaymentFils > 0) : [];
+  })).filter((item) => item.name && item.reservedPaymentFils >= 0) : [];
+
+  // F10: إشعارات ما قدرنا نقرأ مبلغها (عملة أجنبية أو صيغة جديدة) تنتظر المستخدم بدل ما تنضاع
+  clean.bankDrafts = Array.isArray(raw.bankDrafts) ? raw.bankDrafts.slice(0, 200).map((item) => ({
+    id: typeof item?.id === "string" ? item.id.slice(0, 100) : createId(),
+    raw: typeof item?.raw === "string" ? item.raw.slice(0, 1_000) : "",
+    reason: typeof item?.reason === "string" ? item.reason.slice(0, 40) : "unrecognized",
+    merchant: typeof item?.merchant === "string" ? item.merchant.trim().slice(0, 80) : "",
+    foreignCurrency: /^[A-Za-z]{3}$/.test(item?.foreignCurrency ?? "") ? item.foreignCurrency.toUpperCase() : "",
+    foreignAmount: typeof item?.foreignAmount === "string" ? item.foreignAmount.slice(0, 24) : "",
+    dateISO: optionalDate(item?.dateISO),
+    createdAt: typeof item?.createdAt === "string" ? item.createdAt.slice(0, 40) : new Date().toISOString()
+  })).filter((item) => item.raw) : [];
 
   clean.customCommitmentCategories = Array.isArray(raw.customCommitmentCategories)
     ? [...new Set(raw.customCommitmentCategories.filter((item) => typeof item === "string").map((item) => item.trim().slice(0, 60)).filter(Boolean))].slice(0, 100)
@@ -274,7 +307,8 @@ function sanitizeState(raw) {
   clean.ui.zakatGoldFils = finiteInteger(raw.ui?.zakatGoldFils);
   clean.ui.zakatDebtsFils = finiteInteger(raw.ui?.zakatDebtsFils);
   clean.ui.inflationRate = finiteNumber(raw.ui?.inflationRate, 2.5, 0, 50);
-  clean.ui.bankSeen = Array.isArray(raw.ui?.bankSeen) ? raw.ui.bankSeen.filter((item) => typeof item === "string" && /^[0-9a-z]{1,16}$/.test(item)).slice(-3000) : [];
+  clean.ui.bankSeen = Array.isArray(raw.ui?.bankSeen) ? raw.ui.bankSeen.filter((item) => typeof item === "string" && /^[0-9a-z]{1,16}$/.test(item)).slice(-BANK_SEEN_LIMIT) : [];
+  clean.ui.bankSeenUpTo = validDate(raw.ui?.bankSeenUpTo) ? raw.ui.bankSeenUpTo : "";
   const fieldOrder = Array.isArray(raw.ui?.bankFieldOrder) ? raw.ui.bankFieldOrder.filter((item, i, all) => BANK_FIELDS.includes(item) && all.indexOf(item) === i) : [];
   clean.ui.bankFieldOrder = fieldOrder.length ? fieldOrder : [...DEFAULT_FIELD_ORDER];
   clean.ui.goldSpreadPct = finiteNumber(raw.ui?.goldSpreadPct, 3, 0, 20);
@@ -296,7 +330,12 @@ function sanitizeState(raw) {
   return clean;
 }
 
+const BANK_SEEN_LIMIT = 20_000;
 let storageAvailable = true;
+function renderStorageWarning() {
+  const banner = document.getElementById("storage-warning");
+  if (banner) banner.hidden = storageAvailable;
+}
 function loadState() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -309,10 +348,29 @@ function loadState() {
 }
 
 let state = loadState();
+/* الحفظ يحاول في كل مرة: الفشل قد يكون مؤقتاً (مساحة ممتلئة أو نافذة خاصة)،
+   فما نقفل الحفظ للأبد، ونخلي تحذيراً ظاهراً على الشاشة إلى أن ينجح (F11). */
 function saveState() {
-  if (!storageAvailable) return;
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-  catch (error) { storageAvailable = false; toast("تعذر الحفظ على الجهاز. صدّر بياناتك قبل إغلاق الصفحة."); console.error(error); }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    storageAvailable = true;
+    renderStorageWarning();
+    return true;
+  } catch (error) {
+    storageAvailable = false;
+    renderStorageWarning();
+    console.error(error);
+    return false;
+  }
+}
+
+/* كل تغيير يمر من هنا: ما نقول «تم» إلا إذا الحفظ نجح فعلاً، ونعرض «تراجع» إذا توفر. */
+function commit(message, { undo = null, render = true, investmentInputs = false } = {}) {
+  const saved = saveState();
+  if (render) renderAll({ investmentInputs });
+  if (!saved) { toast("ما قدرت أحفظ على الجهاز. صدّر نسخة احتياطية قبل ما تسكر الصفحة."); return false; }
+  if (message) toast(message, undo ? { undo } : {});
+  return true;
 }
 
 function escapeHTML(value = "") {
@@ -339,7 +397,7 @@ function formatSignedMoney(valueFils) {
 }
 
 function formatSignedPercent(value) {
-  if (!Number.isFinite(value) || Math.abs(value) < .005) return "٠٪";
+  if (!Number.isFinite(value) || Math.abs(value) < .005) return "0٪";
   return `${value > 0 ? "\u200E+" : "\u200E−"}${Math.abs(value).toLocaleString("ar-KW-u-nu-latn", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}٪`;
 }
 
@@ -349,27 +407,43 @@ function stockPriceInput(priceTenths) {
 }
 
 function parseShareQuantity(value) {
-  const normalized = normalizeDigits(String(value ?? "")).replaceAll("٬", "").replaceAll(",", "").trim();
-  if (!/^\d+$/.test(normalized)) return null;
-  const quantity = Number(normalized);
-  return Number.isSafeInteger(quantity) && quantity >= 1 && quantity <= 100_000_000 ? quantity : null;
+  return parseCount(value, { min: 1, max: 100_000_000 });
 }
 
 function formatDuration(months) {
   if (months === 0) return "مكتمل";
   const years = Math.floor(months / 12);
   const rest = months % 12;
-  if (!years) return `${months} شهر`;
-  return rest ? `${years} سنة و${rest} شهر` : `${years} سنة`;
+  if (!years) return countLabel(months, "month");
+  return rest ? `${countLabel(years, "year")} و${countLabel(rest, "month")}` : countLabel(years, "year");
 }
 
 let toastTimer;
-function toast(message) {
+function toast(message, { undo = null, undoLabel = "تراجع" } = {}) {
   const element = $("#toast");
-  element.textContent = message;
+  element.textContent = "";
+  element.append(document.createTextNode(message));
+  if (undo) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "toast-undo";
+    button.textContent = undoLabel;
+    button.addEventListener("click", () => { hideToast(); undo(); });
+    element.append(button);
+  }
+  // النافذة المفتوحة في الطبقة العلوية تغطي أي شيء في الصفحة، فالتوست ينتقل داخلها (F22)
+  const open = [...document.querySelectorAll("dialog[open]")];
+  const host = open.length ? open[open.length - 1] : document.body;
+  if (element.parentElement !== host) host.append(element);
   element.classList.add("show");
+  element.classList.toggle("has-action", Boolean(undo));
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => element.classList.remove("show"), 2600);
+  toastTimer = setTimeout(hideToast, undo ? 7000 : 2600);
+}
+function hideToast() {
+  clearTimeout(toastTimer);
+  const element = $("#toast");
+  element.classList.remove("show", "has-action");
 }
 
 function setText(selector, value) { $(selector).textContent = value; }
@@ -394,9 +468,17 @@ function applyMerchantKnowledge(parsed) {
   };
 }
 
+function wouldRenameOthers(record) {
+  const key = merchantKey(record.rawMerchant);
+  // وصف عام ما نتعلّم منه أصلاً، فلا نسأل عنه (F28)
+  if (!key || genericMerchantKey(key)) return 0;
+  return state.transactions.filter((item) => item.id !== record.id && item.rawMerchant &&
+    merchantKey(item.rawMerchant) === key && item.merchant !== record.merchant).length;
+}
 function learnMerchant(record) {
   if (!["bank-text", "bank-statement"].includes(record.source) || !record.rawMerchant) return;
   const key = merchantKey(record.rawMerchant);
+  if (genericMerchantKey(key)) return;
   if (!key) return;
   const rule = state.merchantRules.find((item) => item.key === key);
   const values = { key, merchant: record.merchant, category: record.category };
@@ -409,13 +491,17 @@ function bankItemBase(item) {
   return transactionFingerprint({ amountFils: item.amountFils, merchant: item.rawMerchant || item.merchant, date: item.date });
 }
 
-function findNotificationDuplicate(fingerprints) {
-  const strong = fingerprints.full !== fingerprints.base;
-  const exact = strong
-    ? state.transactions.find((item) => item.fingerprint === fingerprints.full)
-    : state.transactions.find((item) => bankItemBase(item) === fingerprints.base && Date.now() - Date.parse(item.createdAt) < 180_000);
-  if (exact) return { duplicate: exact };
-  return { possibleDuplicate: state.transactions.some((item) => bankItemBase(item) === fingerprints.base) };
+/* الحذف الصامت لازم يكون مبنياً على شيء يميّز العملية فعلاً: مرجع أو رصيد أو وقت.
+   بدونها، شراءان بنفس المبلغ من نفس التاجر في نفس اليوم عمليتان مختلفتان،
+   فنضيفها ونعلّمها «قد تكون مكررة» ونخلي القرار للمستخدم (F8). */
+function findNotificationDuplicate(fingerprints, { kind = null, balanceFils = null } = {}) {
+  if (fingerprints.distinctive) {
+    const exact = state.transactions.find((item) => item.fingerprint && item.fingerprint === fingerprints.full);
+    if (exact) return { duplicate: exact };
+  }
+  // الاسترداد (دخل) مو تكرار للشراء (مصروف) بنفس المبلغ واليوم، وشراءان برصيدين مختلفين بعدهما عمليتان أكيد (F8)
+  return { possibleDuplicate: state.transactions.some((item) => (!kind || item.kind === kind) && bankItemBase(item) === fingerprints.base &&
+    !(balanceFils && item.notifBalanceFils && item.notifBalanceFils !== balanceFils)) };
 }
 
 function queueNotification(notification) {
@@ -423,12 +509,13 @@ function queueNotification(notification) {
     ? applyMerchantKnowledge({ merchant: notification.rawMerchant, category: notification.category })
     : { merchant: notification.merchant, rawMerchant: notification.rawMerchant, category: notification.category };
   const fingerprints = notificationFingerprints({ ...notification, rawMerchant: learned.rawMerchant });
-  const found = findNotificationDuplicate(fingerprints);
+  const found = findNotificationDuplicate(fingerprints, notification);
   if (found.duplicate) return { status: "duplicate", record: found.duplicate };
   const record = {
     id: createId(), amountFils: notification.amountFils, merchant: learned.merchant, rawMerchant: learned.rawMerchant,
     category: learned.category, kind: notification.kind, date: notification.dateISO, reviewed: false, source: "bank-text",
     fingerprint: fingerprints.full, notifBalanceFils: notification.balanceFils, cardLast4: notification.cardLast4 ?? "",
+    cardKind: notification.cardKind ?? "",
     possibleDuplicate: found.possibleDuplicate === true, createdAt: new Date().toISOString()
   };
   state.transactions.push(record);
@@ -446,26 +533,65 @@ function bankMessageHash(message) {
   return h1.toString(36) + h2.toString(36);
 }
 
-function ingestBankText(raw, { fromFile = false } = {}) {
+/* الرسائل الترويجية وتحيات البنك ما تصير مسودات: المسودة لإشعار فيه مبلغ ما قدرنا نقرأه. */
+function looksFinancial(raw) {
+  const text = normalizeDigits(String(raw ?? "")).replaceAll("٫", ".");
+  return /\d/.test(text) && /(?:KWD|KD|د\.ك|دينار|USD|EUR|GBP|AED|SAR|\b[A-Z]{3}\b)/i.test(text);
+}
+
+function draftFromNotification(notification, stampISO) {
+  return {
+    id: createId(), raw: String(notification.raw ?? "").slice(0, 1_000), reason: notification.reason ?? "unrecognized",
+    merchant: notification.rawMerchant || notification.merchant || "",
+    foreignCurrency: notification.foreign?.currency ?? "", foreignAmount: notification.foreign?.amount ?? "",
+    dateISO: stampISO || "", createdAt: new Date().toISOString()
+  };
+}
+
+function ingestBankText(raw, { fromFile = false, dateOverrideISO = "" } = {}) {
   const today = todayISO();
   const all = splitBankMessages(raw);
   const seen = new Set(state.ui.bankSeen);
   const messages = all.filter((message) => !seen.has(bankMessageHash(message)));
-  const summary = { total: messages.length, alreadyRead: all.length - messages.length, queued: 0, duplicates: 0, possible: 0, ignored: [], manual: [] };
-  if (fromFile) {
-    // A file is re-read many times; remember every message so it is never added twice, even ones needing manual entry.
-    state.ui.bankSeen = [...state.ui.bankSeen, ...messages.map(bankMessageHash)].slice(-3000);
-  }
+  const summary = { total: messages.length, alreadyRead: all.length - messages.length, queued: 0, duplicates: 0, possible: 0, drafts: 0, ignored: [], manual: [] };
+  const read = [];
+  const batch = new Set();
   for (const message of messages) {
     const { stampISO, body } = splitStamp(message);
-    const notification = parseBankNotification(body, { todayISO: stampISO && stampISO <= today ? stampISO : today, fieldOrder: state.ui.bankFieldOrder });
-    if (notification.ignored) { summary.ignored.push(NOTIFICATION_REASONS[notification.reason]); continue; }
-    if (notification.needsManual) { summary.manual.push(notification); continue; }
+    // نفس الإشعار بنفس الطابع وبنفس الوقت مرتين بالملف (الاختصار اشتغل مرتين) = إشعار واحد.
+    // بدون وقت بالطابع ما نحكم، لأن شراءين حقيقيين بنفس المبلغ ممكنين (F8).
+    const hash = bankMessageHash(message);
+    if (stampISO && /\d{1,2}:\d{2}/.test(normalizeDigits(message.split("\n")[0])) && batch.has(hash)) {
+      summary.duplicates += 1; read.push(message); continue;
+    }
+    batch.add(hash);
+    const stamp = dateOverrideISO && validDate(dateOverrideISO) && dateOverrideISO <= today ? dateOverrideISO : stampISO;
+    const notification = parseBankNotification(body, { todayISO: stamp && stamp <= today ? stamp : today, fieldOrder: state.ui.bankFieldOrder });
+    if (notification.ignored) { summary.ignored.push(NOTIFICATION_REASONS[notification.reason]); read.push(message); continue; }
+    if (notification.needsManual) {
+      summary.manual.push(notification);
+      // من ملف الاختصار ما فيه أحد يقرأ الشاشة، فنحفظها مسودة بدل ما تُنسى (F10).
+      // رسالة بلا مبلغ (تحية أو عرض) ما تصير مسودة، لكنها تُعدّ مقروءة حتى ما تتكرر كل جلب.
+      if (fromFile) {
+        if (looksFinancial(notification.raw) && state.bankDrafts.length < 200 && !state.bankDrafts.some((item) => item.raw === notification.raw)) {
+          state.bankDrafts.push(draftFromNotification(notification, stamp));
+          summary.drafts += 1;
+        }
+        read.push(message);
+      }
+      continue;
+    }
     const result = queueNotification(notification);
     if (result.status === "duplicate") summary.duplicates += 1;
     else { summary.queued += 1; if (result.record.possibleDuplicate) summary.possible += 1; }
+    read.push(message);
   }
-  if (summary.queued || fromFile) { saveState(); renderAll(); }
+  if (fromFile) {
+    // الملف يُقرأ كل مرة من أوله، فنتذكر الرسائل اللي عالجناها فقط — لا كل اللي شفناها (F10 · F30)
+    state.ui.bankSeen = [...state.ui.bankSeen, ...read.map(bankMessageHash)].slice(-BANK_SEEN_LIMIT);
+    state.ui.bankSeenUpTo = today;
+  }
+  if (summary.queued || summary.drafts || fromFile) { saveState(); renderAll(); }
   return summary;
 }
 
@@ -486,14 +612,15 @@ function showBankManual(notification) {
 
 function reportBankSummary(summary) {
   const parts = [];
-  if (summary.queued) parts.push(summary.queued === 1 && summary.total === 1 ? "وصل إشعار بوبيان — راجعه واعتمده" : `أضفت ${summary.queued.toLocaleString("ar-KW-u-nu-latn")} للمراجعة`);
-  if (summary.possible) parts.push(`${summary.possible.toLocaleString("ar-KW-u-nu-latn")} قد تكون مكررة`);
-  if (summary.duplicates) parts.push(`${summary.duplicates.toLocaleString("ar-KW-u-nu-latn")} مكررة تجاهلتها`);
+  if (summary.queued) parts.push(summary.queued === 1 && summary.total === 1 ? "وصل إشعار بوبيان — راجعه واعتمده" : `أضفت ${countLabel(summary.queued, "transaction")} للمراجعة`);
+  if (summary.possible) parts.push(`${countLabel(summary.possible, "transaction")} قد تكون مكررة`);
+  if (summary.duplicates) parts.push(`${countLabel(summary.duplicates, "transaction")} مكررة تجاهلتها`);
+  if (summary.drafts) parts.push(`${countLabel(summary.drafts, "notification")} تحتاج مبلغاً بالدينار`);
   if (summary.ignored.length) parts.push(summary.ignored[0] + (summary.ignored.length > 1 ? ` (+${(summary.ignored.length - 1).toLocaleString("ar-KW-u-nu-latn")})` : ""));
   if (!parts.length && summary.alreadyRead && !summary.manual.length) parts.push("ما فيه رسائل جديدة من آخر مرة");
-  if (summary.queued) switchView("transactions");
+  if (summary.queued || summary.drafts) switchView("transactions");
   if (parts.length) toast(parts.join(" · "));
-  if (summary.manual.length) showBankManual(summary.manual[0]);
+  if (summary.manual.length && !summary.drafts) showBankManual(summary.manual[0]);
 }
 
 function describeNotification(notification) {
@@ -506,7 +633,7 @@ function describeNotification(notification) {
     `${formatDate(notification.dateISO)}${notification.dateAssumed ? " (اليوم افتراضياً)" : ""}`
   ];
   if (notification.balanceFils) bits.push(`رصيد ${formatMoney(notification.balanceFils)}`);
-  if (notification.cardLast4) bits.push(`بطاقة ••${notification.cardLast4}`);
+  if (notification.cardLast4) bits.push(`${notification.cardKind === "account" ? "حساب" : "بطاقة"} ••${notification.cardLast4}`);
   return `✓ ${bits.map(escapeHTML).join(" · ")}`;
 }
 
@@ -515,8 +642,23 @@ function renderBankPreview() {
   if (!box) return;
   const messages = splitBankMessages($("#bank-text").value);
   const today = todayISO();
-  box.innerHTML = messages.slice(0, 5).map((message) => `<div>${describeNotification(parseBankNotification(splitStamp(message).body, { todayISO: today, fieldOrder: state.ui.bankFieldOrder }))}</div>`).join("") +
-    (messages.length > 5 ? `<div>… و${(messages.length - 5).toLocaleString("ar-KW-u-nu-latn")} إشعارات أخرى</div>` : "");
+  const override = $("#bank-date")?.value ?? "";
+  box.innerHTML = messages.slice(0, 5).map((message) => {
+    const { stampISO, body } = splitStamp(message);
+    // المعاينة تستخدم نفس تاريخ الحفظ (الطابع أو ما يختاره المستخدم) حتى ما يفاجئه الفرق (F32)
+    const stamp = validDate(override) && override <= today ? override : stampISO;
+    const notification = parseBankNotification(body, { todayISO: stamp && stamp <= today ? stamp : today, fieldOrder: state.ui.bankFieldOrder });
+    // التاريخ جا من سطر الطابع أو من خانة التاريخ، فما هو «اليوم افتراضياً» (F32)
+    if (stamp && stamp <= today && notification.dateISO === stamp) notification.dateAssumed = false;
+    let flag = "";
+    if (!notification.ignored && !notification.needsManual) {
+      const found = findNotificationDuplicate(notificationFingerprints(notification), notification);
+      if (found.duplicate) flag = ' <b class="preview-dup">⚠ موجودة من قبل</b>';
+      else if (found.possibleDuplicate) flag = ' <b class="preview-dup">⚠ قد تكون مكررة</b>';
+    }
+    return `<div>${describeNotification(notification)}${flag}</div>`;
+  }).join("") +
+    (messages.length > 5 ? `<div>… و${countLabel(messages.length - 5, "notification")} أخرى</div>` : "");
 }
 
 function financialContext(today = todayISO()) {
@@ -546,7 +688,9 @@ function financialContext(today = todayISO()) {
     todayISO: today
   });
   const bounds = monthBounds(today);
-  const expenses = currentMonthTransactions("expense");
+  const living = advisorLivingBaseline(today);
+  // «قسط» داخل الأقساط الشهرية أصلاً، فما يُحسب مرة ثانية في مصروف الشهر والميزانية (F3)
+  const expenses = currentMonthTransactions("expense").filter((item) => item.category !== INSTALLMENT_CATEGORY);
   const spentFils = expenses.reduce((sum, item) => sum + item.amountFils, 0);
   const weekDebt = debtOccurrences(state.loans, { fromISO: today, toISO: addDaysISO(today, 7), payments: state.debtPayments }).filter((item) => !item.paid);
   const weekCommitments = commitmentOccurrences(state.monthlyCommitments, { fromISO: today, toISO: addDaysISO(today, 7), payments: state.commitmentPayments }).filter((item) => !item.paid);
@@ -565,6 +709,9 @@ function financialContext(today = todayISO()) {
     spentFils,
     comparison: spendingComparison(state.transactions, today),
     flow: financialFlow({ incomeFils, debtPaymentsFils: debts.monthlyPaymentsFils, commitmentFils: commitments?.monthlyEquivalentFils ?? 0, expensesFils: spentFils }),
+    // F5: الفائض/العجز الشهري من نفس الدالة اللي يستخدمها المستشار والفحص وخطة الأهداف
+    living,
+    surplus: monthlySurplus({ incomeFils, debtPaymentsFils: debts.monthlyPaymentsFils, commitmentsFils: commitments?.monthlyEquivalentFils ?? 0, livingFils: living.amountFils }),
     weekDue: {
       debtCount: weekDebt.length,
       commitmentCount: weekCommitments.length,
@@ -610,12 +757,26 @@ function renderFinancialAlerts() {
     </article>`).join("");
 }
 
+/* صافي الثروة: النقد والأصول + قيمة ما تتابعه فعلاً (أسهم وذهب) − كل الدين المتبقي.
+   «قيمة الاستثمارات» في الإعدادات رقم يدوي، فنستخدمه فقط إذا ما فيه محفظة متابَعة حتى لا يُحتسب مرتين (F19). */
+function trackedInvestmentFils() {
+  const stocksFils = state.stockHoldings.reduce((sum, holding) => sum + (calculateStockPosition(holding)?.currentValueFils ?? 0), 0);
+  const goldFils = goldSummary(state.goldPurchases, state.goldPrices.at(-1)?.fils24).valueFils ?? 0;
+  const tracked = stocksFils + goldFils;
+  return { stocksFils, goldFils, tracked, usedFils: tracked > 0 ? tracked : state.settings.investedFils };
+}
+function netWorthFils(debts) {
+  const investments = trackedInvestmentFils();
+  // المتوقف ما يزول: debtSummary يحتسب رصيده ضمن الإجمالي
+  return state.settings.cashFils + state.settings.assetsFils + investments.usedFils - debts.totalBalanceFils;
+}
+
 function renderDashboard() {
   const context = financialContext();
   syncFinancialAlerts(context);
   context.alertCount = state.financialAlerts.filter((item) => item.active && !item.dismissedAt).length;
   const todaySpent = context.expenses.filter((item) => item.date === context.todayISO).reduce((sum, item) => sum + item.amountFils, 0);
-  const netWorth = state.settings.cashFils + state.settings.investedFils + state.settings.assetsFils - context.debts.totalBalanceFils;
+  const netWorth = netWorthFils(context.debts);
   const budget = state.settings.budgetFils;
   const budgetRatio = budget > 0 ? context.spentFils / budget : 0;
   const safeToday = context.safe?.dailySafeFils ?? 0;
@@ -631,6 +792,7 @@ function renderDashboard() {
   setText("#safe-installments", formatMoney(context.safe?.upcomingDebtPaymentsFils ?? 0));
   setText("#safe-commitments", formatMoney(context.safe?.upcomingCommitmentsFils ?? 0));
   setText("#safe-cards", formatMoney(context.safe?.reservedCreditCardFils ?? 0));
+  setText("#safe-payday-due", formatMoney(context.safe?.paydayDueFils ?? 0));
   setText("#safe-buffer", formatMoney(state.settings.safetyBufferFils));
   if (context.safe?.shortfallFils > 0) setText("#budget-caption", `عندك عجز محجوز قدره ${formatMoney(context.safe.shortfallFils)} قبل أي صرف جديد`);
   else if (context.safe) setText("#budget-caption", `متاح حتى دخل ${formatDate(context.safe.paydayISO)} · بعد حجز كل المستحقات`);
@@ -643,7 +805,9 @@ function renderDashboard() {
   const dailyCard = $("#daily-budget-card");
   setText("#daily-limit", formatMoney(safeToday));
   setText("#daily-remaining", formatMoney(dailyRemaining));
-  setText("#days-remaining", (context.safe?.daysUntilPayday ?? 0).toLocaleString("ar-KW-u-nu-latn"));
+  // بدون دخل ولا رصيد مسجل، «18 يوم للراتب» رقم بلا معنى (F61)
+  const hasBasics = context.incomeFils > 0 || state.settings.cashFils > 0;
+  setText("#days-remaining", context.safe && hasBasics ? context.safe.daysUntilPayday.toLocaleString("ar-KW-u-nu-latn") : "—");
   $("#daily-progress").style.width = `${Math.min(Math.max(dailyRatio * 100, 0), 100)}%`;
   dailyCard.classList.toggle("over-budget", dailyRemaining < 0);
   if (!context.incomeFils || !state.settings.cashFils) {
@@ -657,11 +821,24 @@ function renderDashboard() {
     setText("#daily-guidance", `تقدر تصرف حتى ${formatMoney(Math.max(dailyRemaining, 0))} اليوم وتبقى التزاماتك محجوزة.`);
   }
 
-  setText("#flow-income", formatMoney(context.flow.incomeFils));
-  setText("#flow-debts", formatMoney(context.flow.debtPaymentsFils));
-  setText("#flow-commitments", formatMoney(context.flow.commitmentFils));
-  setText("#flow-expenses", formatMoney(context.flow.expensesFils));
-  setText("#flow-available", formatMoney(context.flow.availableFils));
+  // F5: نفس رقم المستشار والفحص والأهداف (monthlySurplus)، والمعيشة متوسط آخر 3 أشهر مكتملة بدون «قسط»
+  const surplus = context.surplus;
+  const livingKnown = context.living.source !== "missing";
+  setText("#flow-income", formatMoney(surplus.incomeFils));
+  setText("#flow-debts", formatMoney(surplus.debtPaymentsFils));
+  setText("#flow-commitments", formatMoney(surplus.commitmentsFils));
+  setText("#flow-expenses", livingKnown ? formatMoney(surplus.livingFils) : "—");
+  // العجز قد يكون سالباً: نعرضه بعلامته لا مقصوصاً على صفر (F4)
+  setText("#flow-available-label", livingKnown && surplus.surplusFils < 0 ? "العجز الشهري" : "الفائض الشهري");
+  setText("#flow-available", livingKnown ? formatMoney(surplus.surplusFils) : "—");
+  $("#flow-available").classList.toggle("amount-negative", livingKnown && surplus.surplusFils < 0);
+  $("#flow-available").parentElement.classList.toggle("is-deficit", livingKnown && surplus.surplusFils < 0);
+  setText("#flow-caption", (context.living.source === "transactions"
+    ? `المعيشة = متوسط آخر ${countLabel(context.living.months, "month")} مكتملة بدون الأقساط، ونفس الرقم في المستشار والأهداف.`
+    : context.living.source === "budget"
+      ? "المعيشة من ميزانيتك المسجلة لأن ما فيه 3 أشهر مكتملة من المصروفات."
+      : "نحتاج 3 أشهر مكتملة من المصروفات أو ميزانية شهرية من الإعدادات لحساب الفائض.") +
+    ` صرفك هذا الشهر حتى الآن ${formatMoney(context.spentFils)}.`);
 
   if (context.forecast?.sufficient) {
     setText("#forecast-status", "تقديري");
@@ -685,7 +862,7 @@ function renderDashboard() {
 
   const pending = state.transactions.filter((item) => !item.reviewed).length;
   let message = "أضف أول عملية عشان أبدأ أحلل صرفك.";
-  if (pending) message = `عندك ${pending.toLocaleString("ar-KW-u-nu-latn")} عملية تحتاج مراجعة قبل تدخل في حساباتك.`;
+  if (pending) message = `عندك ${countLabel(pending, "transaction")} تحتاج مراجعة قبل تدخل في حساباتك.`;
   else if (context.alertCount) message = `عندك ${context.alertCount.toLocaleString("ar-KW-u-nu-latn")} تنبيه مالي جديد يستحق المراجعة.`;
   else if (categoryData.length) message = `أكثر صرفك هذا الشهر على ${categoryData[0][0]}: ${formatMoney(categoryData[0][1])}.`;
   else if (context.debts.dtiPercent !== null) message = `نسبة أقساطك إلى دخلك ${Math.round(context.debts.dtiPercent).toLocaleString("ar-KW-u-nu-latn")}٪.`;
@@ -708,6 +885,8 @@ function renderSpendingBehavior() {
   setText("#behavior-total", formatMoney(report.totalFils));
   setText("#behavior-average", formatMoney(report.monthlyAverageFils));
   setText("#behavior-count", report.count.toLocaleString("ar-KW-u-nu-latn"));
+  // F25: المتوسط من الأشهر المكتملة فقط، والشهر الجاري يُستثنى حتى لا يكسر المقارنة
+  setText("#behavior-average-caption", report.partialMonth ? `بدون الشهر الجاري (${report.partialMonth})` : "من الأشهر المسجلة");
   setText("#behavior-top-category", report.categories[0]?.name ?? "—");
   const maximum = Math.max(...report.monthly.map((item) => item.totalFils), 1);
   $("#behavior-month-chart").innerHTML = report.monthly.map((item) => `
@@ -717,7 +896,7 @@ function renderSpendingBehavior() {
   const repeated = report.merchants.slice(0, 3);
   $("#behavior-repeat-section").hidden = repeated.length === 0;
   $("#behavior-repeat-list").innerHTML = repeated.map((item) => `
-    <div class="behavior-repeat-row"><span><strong>${escapeHTML(item.merchant)}</strong><small>${item.count.toLocaleString("ar-KW-u-nu-latn")} عمليات · ${item.months.toLocaleString("ar-KW-u-nu-latn")} أشهر</small></span><strong>${escapeHTML(formatMoney(item.averagePerRecordedMonthFils))}<small>لكل شهر ظهر فيه</small></strong></div>`).join("");
+    <div class="behavior-repeat-row"><span><strong>${escapeHTML(item.merchant)}</strong><small>${countLabel(item.count, "transaction")} · ${countLabel(item.months, "month")}</small></span><strong>${escapeHTML(formatMoney(item.averagePerRecordedMonthFils))}<small>لكل شهر ظهر فيه</small></strong></div>`).join("");
   $("#behavior-category-change-section").hidden = report.categoryChanges.length === 0;
   $("#behavior-category-change-list").innerHTML = report.categoryChanges.map((item) => `
     <div class="behavior-repeat-row"><span><strong>${escapeHTML(item.name)}</strong><small>متوسط الشهر: ${escapeHTML(formatMoney(item.previousAverageFils))} ← ${escapeHTML(formatMoney(item.recentAverageFils))}</small></span><strong class="behavior-change">+${Math.round(item.changePercent).toLocaleString("ar-KW-u-nu-latn")}٪</strong></div>`).join("");
@@ -725,26 +904,54 @@ function renderSpendingBehavior() {
   const importedEnd = state.statementImport.coverageEndISO || report.toISO;
   const firstTransaction = report.recordedStartISO ? formatDate(report.recordedStartISO) : formatDate(importedStart);
   const lastTransaction = report.recordedEndISO ? formatDate(report.recordedEndISO) : formatDate(importedEnd);
-  setText("#behavior-coverage", `نافذة التحليل: ${formatDate(report.fromISO)} إلى ${formatDate(report.toISO)} · أقدم وآخر حركة مسجلة: ${firstTransaction} إلى ${lastTransaction} · ${report.activeMonths.toLocaleString("ar-KW-u-nu-latn")} أشهر فيها مصروفات من ${report.count.toLocaleString("ar-KW-u-nu-latn")} عملية معتمدة. تأكد أن ملف البنك يغطي الفترة كاملة؛ الشهر الخالي من العمليات قد يكون بلا صرف أو خارج الملف.`);
+  setText("#behavior-coverage", `نافذة التحليل: ${formatDate(report.fromISO)} إلى ${formatDate(report.toISO)} · أقدم وآخر حركة مسجلة: ${firstTransaction} إلى ${lastTransaction} · ${countLabel(report.activeMonths, "month")} فيها مصروفات من ${countLabel(report.count, "transaction")} معتمدة. تأكد أن ملف البنك يغطي الفترة كاملة؛ الشهر الخالي من العمليات قد يكون بلا صرف أو خارج الملف.`);
+}
+
+const sourceLabel = (source) => source === "manual" ? "يدوي" : source === "bank-statement" ? "من الكشف" : "من البنك";
+const cardChip = (item) => item.cardLast4 ? ` · ${item.cardKind === "account" ? "حساب" : "بطاقة"} ••${escapeHTML(item.cardLast4)}` : "";
+
+/* البحث يشمل الاسم الخام والتصنيف والتاريخ والمبلغ، ويوحّد الأرقام والفواصل العربية قبل المقارنة (F50). */
+function searchText(value) {
+  return normalizeDigits(String(value ?? "")).replaceAll("٫", ".").replaceAll("٬", "").replace(/[‎‏؜]/g, "").toLowerCase();
+}
+function transactionMatches(item, query) {
+  if (!query) return true;
+  const haystack = searchText(`${item.merchant} ${item.rawMerchant} ${item.category} ${item.date} ${moneyInput(item.amountFils)} ${formatDate(item.date)} ${sourceLabel(item.source)}`);
+  return haystack.includes(query);
+}
+
+function draftLine(draft) {
+  const foreign = draft.foreignCurrency ? `${draft.foreignCurrency} ${draft.foreignAmount}` : "";
+  return `<article class="bank-draft" data-draft-id="${escapeHTML(draft.id)}">
+    <strong>${escapeHTML(draft.merchant || "إشعار بنك")}</strong>
+    <p>${escapeHTML(cutText(draft.raw, 220))}</p>
+    <small>${escapeHTML(foreign ? `بعملة ${foreign} — أدخل المبلغ بالدينار من كشف البنك` : (NOTIFICATION_REASONS[draft.reason] ?? "ما قدرت أحدد المبلغ"))}${draft.dateISO ? ` · ${escapeHTML(formatDate(draft.dateISO))}` : ""}</small>
+    <div class="row">
+      <button type="button" class="primary small" data-draft-amount="${escapeHTML(draft.id)}">أدخل المبلغ بالدينار</button>
+      <button type="button" class="ghost small" data-draft-delete="${escapeHTML(draft.id)}">تجاهل</button>
+    </div>
+  </article>`;
 }
 
 function renderTransactions() {
-  const query = $("#transaction-search").value.trim().toLowerCase();
+  const query = searchText($("#transaction-search").value).trim();
   const filter = $("#transaction-kind-filter").value;
   const filtered = state.transactions
-    .filter((item) => !query || `${item.merchant} ${item.category}`.toLowerCase().includes(query))
+    .filter((item) => transactionMatches(item, query))
     .filter((item) => filter === "all" || (filter === "pending" ? !item.reviewed : item.kind === filter))
     .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
   const pendingItems = state.transactions
     .filter((item) => !item.reviewed)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const pending = pendingItems.length;
-  $("#pending-inbox").hidden = pending === 0;
-  setText("#pending-count", pending.toLocaleString("ar-KW-u-nu-latn"));
+  const drafts = state.bankDrafts;
+  $("#pending-inbox").hidden = pending === 0 && drafts.length === 0;
+  setText("#pending-count", (pending + drafts.length).toLocaleString("ar-KW-u-nu-latn"));
   renderBankCard();
-  $("#pending-inbox-list").innerHTML = (pending > 1 ? `<button type="button" class="secondary approve-all" data-approve-all="1">اعتماد الكل (بدون المشكوك فيها)</button>` : "") + pendingItems.map((item) => `
+  $("#pending-inbox-list").innerHTML = drafts.map(draftLine).join("") +
+    (pending > 1 ? `<button type="button" class="secondary approve-all" data-approve-all="1">اعتماد الكل (بدون المشكوك فيها)</button>` : "") + pendingItems.map((item) => `
     <article class="pending-inbox-item">
-      <div><strong>${escapeHTML(item.merchant)}</strong><small>${escapeHTML(item.category)} · ${escapeHTML(formatDate(item.date))}${item.cardLast4 ? ` · بطاقة ••${escapeHTML(item.cardLast4)}` : ""}</small>${item.possibleDuplicate ? '<span class="pending-badge">قد تكون مكررة</span>' : ""}</div>
+      <div><strong>${escapeHTML(item.merchant)}</strong><small>${escapeHTML(item.category)} · ${escapeHTML(formatDate(item.date))} · ${escapeHTML(sourceLabel(item.source))}${cardChip(item)}</small>${item.possibleDuplicate ? '<span class="pending-badge">قد تكون مكررة</span>' : ""}</div>
       <div class="pending-inbox-amount ${item.kind === "income" ? "income" : ""}">${item.kind === "income" ? "\u200E+" : "\u200E−"}${escapeHTML(formatMoney(item.amountFils))}</div>
       ${item.notifBalanceFils ? `<button type="button" class="ghost small sync-balance" data-sync-balance="${escapeHTML(item.id)}">الرصيد بالإشعار ${escapeHTML(formatMoney(item.notifBalanceFils))} — تحديث رصيدي</button>` : ""}
       <div class="pending-inbox-actions">
@@ -755,20 +962,20 @@ function renderTransactions() {
   const pendingNotice = $("#pending-notice");
   pendingNotice.hidden = true;
   pendingNotice.textContent = "";
-  $("#transaction-empty").hidden = filtered.length > 0;
-  $("#transaction-list").innerHTML = filtered.map((item) => `
+  $("#transaction-empty").hidden = state.transactions.length > 0;
+  $("#transaction-list").innerHTML = filtered.length ? filtered.map((item) => `
     <article class="transaction-item" data-id="${escapeHTML(item.id)}">
       <div class="transaction-icon ${item.kind === "income" ? "income" : ""}">${item.kind === "income" ? "↓" : "↑"}</div>
       <div class="transaction-main">
         <strong>${escapeHTML(item.merchant)}</strong>
-        <small>${escapeHTML(item.category)} · ${escapeHTML(formatDate(item.date))}</small>
+        <small>${escapeHTML(item.category)} · ${escapeHTML(formatDate(item.date))} · ${escapeHTML(sourceLabel(item.source))}${cardChip(item)}</small>
         ${item.reviewed ? "" : '<span class="pending-badge">تحتاج مراجعة</span>'}
       </div>
       <div>
         <div class="transaction-amount ${item.kind === "income" ? "income" : ""}">${item.kind === "income" ? "\u200E+" : "\u200E−"}${escapeHTML(formatMoney(item.amountFils))}</div>
         <div class="item-actions"><button data-edit-transaction="${escapeHTML(item.id)}">${item.reviewed ? "تعديل" : "مراجعة"}</button><button class="delete" data-delete-transaction="${escapeHTML(item.id)}">حذف</button></div>
       </div>
-    </article>`).join("");
+    </article>`).join("") : (state.transactions.length ? '<div class="empty-inline">ما في نتائج تطابق بحثك أو الفلتر.</div>' : "");
 }
 
 function paymentMethodLabel(value) {
@@ -778,16 +985,60 @@ function paymentMethodLabel(value) {
 function commitmentStatusInfo(commitment, today = todayISO()) {
   const bounds = monthBounds(today);
   const monthOccurrences = bounds ? commitmentOccurrences([commitment], { fromISO: bounds.startISO, toISO: bounds.endISO, payments: state.commitmentPayments, includePaused: true }) : [];
-  const current = monthOccurrences[0] ?? null;
+  const current = monthOccurrences.find((item) => !item.paid) ?? monthOccurrences[0] ?? null;
   if (commitment.status === "paused") return { key: "paused", label: "متوقف مؤقتاً", occurrence: current };
   if (commitment.status === "completed") return { key: "completed", label: "مكتمل", occurrence: current };
+  const late = monthOccurrences.find((item) => !item.paid && item.dueDate < today);
+  // مرّ موعده في هذا الشهر وما سُجّل دفعه: «متأخر» لا «نشط» (F14)
+  if (late) return { key: "overdue", label: "متأخر", occurrence: late };
   if (current?.paid) return { key: "paid", label: "مدفوع هذا الشهر", occurrence: current };
   return { key: "active", label: "نشط", occurrence: current };
 }
 
+/* الاستحقاق القادم يبدأ من أول الشهر لا من اليوم، وإلا اختفى التزام موعده أمس (F14). */
 function nextCommitmentOccurrence(commitment, today = todayISO()) {
-  return commitmentOccurrences([commitment], { fromISO: today, toISO: addDaysISO(today, 730), payments: state.commitmentPayments, includePaused: true })
+  const bounds = monthBounds(today);
+  const fromISO = bounds ? bounds.startISO : today;
+  return commitmentOccurrences([commitment], { fromISO, toISO: addDaysISO(today, 730), payments: state.commitmentPayments, includePaused: true })
     .find((item) => !item.paid) ?? null;
+}
+
+/* «3 أقساط · 802.300» أوضح من اسم قسط واحد لما تنزل كلها بنفس اليوم (F60). */
+function sameDayLabel(list, unit, formatOne) {
+  if (!list?.length) return null;
+  if (list.length === 1) return formatOne(list[0]);
+  const total = list.reduce((sum, item) => sum + (item.amountFils ?? item.installmentFils ?? 0), 0);
+  return `${countLabel(list.length, unit)} · ${formatMoney(total)}`;
+}
+
+/* F18: تسجيل الدفع كان يحجز المبلغ فقط ولا ينقص الكاش، فالرصيد يبقى أعلى من الحقيقة.
+   نسأل مرة ونحفظ الجواب على الدفعة حتى يُعكس عند التراجع. */
+async function markCommitmentPaid(commitmentId, dueDate) {
+  const commitment = state.monthlyCommitments.find((item) => item.id === commitmentId);
+  if (!commitment || !validDate(dueDate)) return;
+  const index = state.commitmentPayments.findIndex((item) => item.commitmentId === commitmentId && sameDueMonth(item.dueDate, dueDate) && item.status !== "reversed");
+  if (index >= 0) {
+    const [payment] = state.commitmentPayments.splice(index, 1);
+    if (payment.cashDeducted) state.settings.cashFils += payment.amountFils;
+    commit(payment.cashDeducted ? "رجّعت الدفع والمبلغ للرصيد" : "تم التراجع عن تسجيل الدفع", { undo: () => {
+      state.commitmentPayments.splice(index, 0, payment);
+      if (payment.cashDeducted) state.settings.cashFils = Math.max(state.settings.cashFils - payment.amountFils, 0);
+      commit("رجّعت التسجيل");
+    } });
+    return;
+  }
+  const deduct = state.settings.cashFils > 0 &&
+    await askConfirm(`نخصم ${formatMoney(commitment.amountFils)} من رصيدك (${formatMoney(state.settings.cashFils)}) لأنك دفعت ${cutText(commitment.name, 24)}؟`, { okLabel: "اخصم من رصيدي" });
+  const payment = { id: createId(), commitmentId, amountFils: commitment.amountFils, dueDate, paidAt: todayISO(), status: "paid", cashDeducted: deduct };
+  state.commitmentPayments.push(payment);
+  if (deduct) state.settings.cashFils = Math.max(state.settings.cashFils - commitment.amountFils, 0);
+  if (commitment.recurrence === "once") commitment.status = "completed";
+  commit(deduct ? `سجّلت الدفع وخصمت ${formatMoney(commitment.amountFils)} من رصيدك` : "تم تسجيل الالتزام كمدفوع", { undo: () => {
+    state.commitmentPayments = state.commitmentPayments.filter((item) => item.id !== payment.id);
+    if (deduct) state.settings.cashFils += commitment.amountFils;
+    if (commitment.recurrence === "once") commitment.status = "active";
+    commit("رجّعت التسجيل");
+  } });
 }
 
 function renderCommitments() {
@@ -798,9 +1049,15 @@ function renderCommitments() {
   setText("#commitments-monthly-total", formatMoney(summary?.monthlyEquivalentFils ?? 0));
   setText("#commitments-paid-total", formatMoney(summary?.paidThisMonthFils ?? 0));
   setText("#commitments-remaining-total", formatMoney(summary?.remainingThisMonthFils ?? 0));
-  setText("#income-after-fixed", formatMoney(Math.max(income - debts.monthlyPaymentsFils - (summary?.monthlyEquivalentFils ?? 0), 0)));
-  setText("#next-commitment-name", summary?.nextUpcoming?.name ?? "لا يوجد");
-  setText("#next-commitment-detail", summary?.nextUpcoming ? `${formatDate(summary.nextUpcoming.dueDate)} · ${formatMoney(summary.nextUpcoming.amountFils)}` : "ما عندك التزام نشط قادم.");
+  const afterFixedFils = income - debts.monthlyPaymentsFils - (summary?.monthlyEquivalentFils ?? 0);
+  setText("#income-after-fixed", formatMoney(afterFixedFils));
+  $("#income-after-fixed").classList.toggle("amount-negative", afterFixedFils < 0);
+  setText("#income-after-fixed-label", afterFixedFils < 0 ? "عجز شهري بعد الأقساط والالتزامات" : "بعد الأقساط والالتزامات");
+  const sameDay = summary?.nextUpcomingSameDay ?? [];
+  setText("#next-commitment-name", sameDay.length > 1 ? countLabel(sameDay.length, "commitment") : (summary?.nextUpcoming?.name ?? "لا يوجد"));
+  setText("#next-commitment-detail", summary?.nextUpcoming
+    ? `${formatDate(summary.nextUpcoming.dueDate)} · ${sameDayLabel(sameDay, "commitment", (item) => formatMoney(item.amountFils))}${sameDay.length > 1 ? ` (${sameDay.map((item) => cutText(item.name, 18)).join("، ")})` : ""}`
+    : "ما عندك التزام نشط قادم.");
 
   const query = $("#commitment-search").value.trim().toLowerCase();
   const categoryFilter = $("#commitment-category-filter").value;
@@ -827,7 +1084,7 @@ function renderCommitments() {
       </div>
       <div class="item-actions">
         <button data-edit-commitment="${escapeHTML(commitment.id)}">تعديل</button>
-        ${commitment.status === "active" && markOccurrence ? `<button class="commitment-paid-toggle ${markOccurrence.paid ? "is-paid" : ""}" role="checkbox" aria-checked="${markOccurrence.paid ? "true" : "false"}" aria-label="${markOccurrence.paid ? "إلغاء تسجيل دفع" : "تسجيل الدفع"}: ${escapeHTML(commitment.name)}" data-toggle-commitment-paid="${escapeHTML(commitment.id)}" data-due-date="${escapeHTML(markOccurrence.dueDate)}"><span aria-hidden="true">${markOccurrence.paid ? "✓" : "○"}</span>${markOccurrence.paid ? "مدفوع" : "تم الدفع"}</button>` : ""}
+        ${commitment.status !== "paused" && markOccurrence ? `<button class="commitment-paid-toggle ${markOccurrence.paid ? "is-paid" : ""}" role="checkbox" aria-checked="${markOccurrence.paid ? "true" : "false"}" aria-label="${markOccurrence.paid ? "إلغاء تسجيل دفع" : "تسجيل الدفع"}: ${escapeHTML(commitment.name)}" data-toggle-commitment-paid="${escapeHTML(commitment.id)}" data-due-date="${escapeHTML(markOccurrence.dueDate)}"><span aria-hidden="true">${markOccurrence.paid ? "✓" : "○"}</span>${markOccurrence.paid ? "مدفوع" : "تم الدفع"}</button>` : ""}
         <button data-toggle-commitment="${escapeHTML(commitment.id)}">${commitment.status === "paused" ? "إعادة تفعيل" : "إيقاف مؤقت"}</button>
         <button class="delete" data-delete-commitment="${escapeHTML(commitment.id)}">حذف</button>
       </div>
@@ -854,8 +1111,10 @@ function renderLoans() {
   setText("#loans-total", formatMoney(summary.totalBalanceFils));
   setText("#installments-total", formatMoney(summary.monthlyPaymentsFils));
   setText("#active-loans-count", summary.activeCount.toLocaleString("ar-KW-u-nu-latn"));
-  setText("#next-installment", summary.nextPayment ? `${formatMoney(summary.nextPayment.installmentFils)} · ${formatDate(summary.nextPayment.dueDate)}` : "لا يوجد");
-  setText("#zero-debt-date", summary.activeCount ? (summary.zeroDebtDate ? formatDate(summary.zeroDebtDate) : "بيانات ناقصة") : "بدون ديون 🎉");
+  setText("#next-installment", summary.nextPayment
+    ? `${sameDayLabel(summary.nextPaymentSameDay, "installment", (item) => formatMoney(item.installmentFils))} · ${formatDate(summary.nextPayment.dueDate)}`
+    : (state.loans.length ? "لا يوجد" : "—"));
+  setText("#zero-debt-date", state.loans.length ? (summary.activeCount ? (summary.zeroDebtDate ? formatDate(summary.zeroDebtDate) : "بيانات ناقصة") : "بدون ديون 🎉") : "—");
   setText("#debt-income-ratio", summary.dtiPercent === null ? "—" : `${Math.round(summary.dtiPercent).toLocaleString("ar-KW-u-nu-latn")}٪`);
   setText("#dti-caption", dtiDescription(summary.dtiPercent));
   $("#global-extra").value = moneyInput(state.ui.extraFils);
@@ -863,7 +1122,10 @@ function renderLoans() {
   $("#loan-list").innerHTML = state.loans.map((loan) => {
     const progress = debtProgress(loan);
     const remaining = remainingInstallments(loan);
-    const calculatedEnd = loan.endDate || (remaining !== null ? addMonthsISO(today, remaining) : "");
+    // كان الحساب «اليوم + عدد الأقساط» فيقدّم النهاية شهراً كاملاً عن موعد الخصم (F15)
+    // المكتمل والمتوقف ما لهم نهاية تقديرية (كانت تطلع بتاريخ اليوم وتتغير كل يوم) — F15
+    const estimable = ["active", "overdue"].includes(loan.status);
+    const calculatedEnd = loan.endDate || (estimable && remaining !== null ? debtEndDate(loan, today, remaining) : "");
     const next = debtOccurrences([loan], { fromISO: today, toISO: addDaysISO(today, 62), payments: state.debtPayments }).find((item) => !item.paid);
     const base = payoff({ balanceFils: loan.balanceFils, installmentFils: loan.installmentFils, annualRate: loan.annualRate });
     const faster = payoff({ balanceFils: loan.balanceFils, installmentFils: loan.installmentFils, extraFils: state.ui.extraFils, annualRate: loan.annualRate });
@@ -879,11 +1141,12 @@ function renderLoans() {
       </div>
       <details class="debt-details"><summary>عرض تفاصيل القرض والمحاكاة</summary><div class="detail-grid">
         <div class="detail"><span>المبلغ الأصلي</span><strong>${escapeHTML(formatMoney(progress.originalAmountFils))}</strong></div>
-        <div class="detail"><span>إجمالي المدفوع</span><strong>${escapeHTML(formatMoney(progress.paidFils))}</strong></div>
+        <div class="detail"><span>إجمالي المدفوع</span><strong>${escapeHTML(formatMoney(Math.max(progress.totalPaidFils, progress.paidFils)))}</strong></div>
+        ${progress.totalPaidFils > progress.paidFils ? `<div class="detail"><span>منها أرباح ورسوم مدفوعة</span><strong>${escapeHTML(formatMoney(progress.totalPaidFils - progress.paidFils))}</strong></div>` : ""}
         <div class="detail"><span>القسط القادم</span><strong>${next ? escapeHTML(formatDate(next.dueDate)) : "—"}</strong></div>
-        <div class="detail"><span>النهاية ${loan.endDate ? "المسجلة" : "التقديرية"}</span><strong>${calculatedEnd ? escapeHTML(formatDate(calculatedEnd)) : "غير واضحة"}</strong></div>
+        <div class="detail"><span>النهاية ${loan.endDate ? "المسجلة" : "التقديرية"}</span><strong>${calculatedEnd ? escapeHTML(formatDate(calculatedEnd)) : estimable ? "غير واضحة" : "—"}</strong></div>
       </div>${globalSimulation}</details>
-      <div class="item-actions"><button data-edit-loan="${escapeHTML(loan.id)}">تعديل</button>${["active", "overdue"].includes(loan.status) ? `<button data-extra-payment="${escapeHTML(loan.id)}">دفعة إضافية</button>` : ""}<button class="delete" data-delete-loan="${escapeHTML(loan.id)}">حذف</button></div>
+      <div class="item-actions"><button data-edit-loan="${escapeHTML(loan.id)}">تعديل</button>${["active", "overdue"].includes(loan.status) && next ? `<button data-pay-installment="${escapeHTML(loan.id)}" data-due-date="${escapeHTML(next.dueDate)}">تم دفع القسط</button>` : ""}${["active", "overdue"].includes(loan.status) ? `<button data-extra-payment="${escapeHTML(loan.id)}">دفعة إضافية</button>` : ""}<button class="delete" data-delete-loan="${escapeHTML(loan.id)}">حذف</button></div>
     </article>`;
   }).join("");
 }
@@ -1102,12 +1365,15 @@ function updateCooling(reset = false) {
   setText("#cooling-message", `أقل كمية أسهم كاملة تحقق المتوسط المطلوب أو أقل. إجمالي الأسهم بعدها ${result.totalQuantity.toLocaleString("ar-KW-u-nu-latn")}. محاكاة فقط؛ ما تتغير محفظتك.`);
 }
 
+// حدود منطقية حتى ما تطلع أرقام فلكية (مليار دينار بعائد 50٪ لـ 60 سنة) — F42
+const INVESTMENT_LIMITS = { initialFils: 10_000_000_000, monthlyFils: 1_000_000_000, minRate: -50, maxRate: 30, maxYears: 50 };
 function investmentFromInputs() {
   const initialFils = parseMoney($("#investment-initial").value);
   const monthlyFils = parseMoney($("#investment-monthly").value);
-  const annualRate = Number($("#investment-rate").value);
-  const years = Number($("#investment-years").value);
-  if (initialFils === null || monthlyFils === null || !Number.isFinite(annualRate) || !Number.isInteger(years)) return null;
+  const annualRate = parseRate($("#investment-rate").value, { min: INVESTMENT_LIMITS.minRate, max: INVESTMENT_LIMITS.maxRate });
+  const years = parseCount($("#investment-years").value, { min: 1, max: INVESTMENT_LIMITS.maxYears });
+  if (initialFils === null || monthlyFils === null || annualRate === null || years === null) return null;
+  if (initialFils > INVESTMENT_LIMITS.initialFils || monthlyFils > INVESTMENT_LIMITS.monthlyFils) return null;
   return { initialFils, monthlyFils, annualRate, years };
 }
 
@@ -1145,6 +1411,7 @@ function renderInvestment(syncInputs = false) {
   const result = values ? investmentProjection(values) : null;
   if (!result) {
     setText("#investment-value", "راجع المدخلات");
+    setText("#investment-duration", "—");
     setText("#investment-contributions", "—");
     setText("#investment-growth", "—");
     $("#investment-chart").innerHTML = "";
@@ -1156,7 +1423,7 @@ function renderInvestment(syncInputs = false) {
   setText("#investment-value", formatMoney(result.valueFils));
   setText("#investment-contributions", formatMoney(result.contributionsFils));
   setText("#investment-growth", formatMoney(result.growthFils));
-  setText("#investment-duration", `${values.years.toLocaleString("ar-KW-u-nu-latn")} سنة`);
+  setText("#investment-duration", countLabel(values.years, "year"));
   $("#investment-growth").style.color = result.growthFils < 0 ? "var(--danger)" : "";
   $("#investment-chart").innerHTML = chartSVG(result.yearly);
   $("#scenario-list").innerHTML = [-5, 0, 4, 7, 10].map((rate) => {
@@ -1172,7 +1439,7 @@ function renderGoals() {
     const remaining = Math.max(goal.targetFils - goal.savedFils, 0);
     let caption = "حدد إضافة شهرية لحساب المدة";
     if (remaining === 0) caption = "وصلت للهدف 🎉";
-    else if (goal.monthlyFils > 0) caption = `باقي تقريباً ${Math.ceil(remaining / goal.monthlyFils).toLocaleString("ar-KW-u-nu-latn")} شهر بدون عائد`;
+    else if (goal.monthlyFils > 0) caption = `باقي تقريباً ${countLabel(Math.ceil(remaining / goal.monthlyFils), "month")} بدون عائد`;
     return `<article class="data-card">
       <div class="card-head"><div><h3>${escapeHTML(goal.name)}</h3><span class="eyebrow">${escapeHTML(caption)}</span></div><span class="amount">${Math.round(percent).toLocaleString("ar-KW-u-nu-latn")}٪</span></div>
       <div class="goal-progress"><div class="progress"><span style="width:${percent}%"></span></div><div class="goal-meta"><span>${escapeHTML(formatMoney(goal.savedFils))}</span><span>${escapeHTML(formatMoney(goal.targetFils))}</span></div></div>
@@ -1181,23 +1448,10 @@ function renderGoals() {
   }).join("");
 }
 
+/* متوسط المعيشة من عمليات «فئة قسط» مستبعدة، لأن الأقساط تُخصم لحالها.
+   كانت الحسبة القديمة تجمع كل المصروف ثم تخصم الثوابت مرة ثانية في بعض الصفحات (F3 · F5). */
 function advisorLivingBaseline(today = todayISO()) {
-  const [year, month] = today.split("-").map(Number);
-  const monthKeys = Array.from({ length: 3 }, (_, index) => {
-    const date = new Date(year, month - 2 - index, 1, 12);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-  });
-  const totals = new Map(monthKeys.map((key) => [key, 0]));
-  for (const item of state.transactions) {
-    const key = item.date.slice(0, 7);
-    if (item.kind === "expense" && item.reviewed && totals.has(key)) totals.set(key, totals.get(key) + item.amountFils);
-  }
-  const observedMonths = [...totals.values()].filter((amount) => amount > 0).length;
-  if (observedMonths === 3) {
-    return { amountFils: Math.round([...totals.values()].reduce((sum, amount) => sum + amount, 0) / 3), source: "transactions", months: observedMonths };
-  }
-  if (state.settings.budgetFils > 0) return { amountFils: state.settings.budgetFils, source: "budget", months: observedMonths };
-  return { amountFils: 0, source: "missing", months: observedMonths };
+  return livingBaseline(state.transactions, today, { months: 3, budgetFils: state.settings.budgetFils });
 }
 
 function renderAdvisor() {
@@ -1206,10 +1460,12 @@ function renderAdvisor() {
   const debt = debtSummary(state.loans, { incomeFils, todayISO: today, payments: state.debtPayments });
   const commitmentsFils = state.monthlyCommitments.reduce((sum, item) => sum + monthlyCommitmentEquivalent(item), 0);
   const baseline = advisorLivingBaseline(today);
+  const emergencyGoalFils = state.goals.find((item) => /طوارئ|emergency/i.test(item.name ?? ""))?.targetFils ?? 0;
   const plan = createAdvisorAllocation({
     incomeFils, debtInstallmentsFils: debt.monthlyPaymentsFils, commitmentsFils,
     livingCostFils: baseline.amountFils, cashFils: state.settings.cashFils,
     totalDebtFils: debt.totalBalanceFils,
+    emergencyGoalFils,
     overdue: state.loans.some((item) => item.status === "overdue"),
     baselineReady: baseline.source !== "missing" && incomeFils > 0
   });
@@ -1221,12 +1477,15 @@ function renderAdvisor() {
   setText("#advisor-budget-installments", `\u200E−${formatMoney(debt.monthlyPaymentsFils)}`);
   setText("#advisor-budget-commitments", `\u200E−${formatMoney(commitmentsFils)}`);
   setText("#advisor-budget-living", `\u200E−${formatMoney(baseline.amountFils)}`);
-  setText("#advisor-surplus", plan.baselineReady ? formatMoney(Math.max(plan.surplusFils, 0)) : "—");
-  setText("#advisor-surplus-label", plan.surplusFils < 0 ? "عجز بعد الأساسيات" : "المتبقي للأهداف");
+  // العجز يظهر بعلامته لا مصفّراً، وإلا بدت الخطة كأنها متوازنة (F4)
+  setText("#advisor-surplus", plan.baselineReady ? formatMoney(plan.surplusFils) : "—");
+  $("#advisor-surplus").classList.toggle("amount-negative", plan.baselineReady && plan.surplusFils < 0);
+  setText("#advisor-surplus-label", plan.surplusFils < 0 ? "العجز بعد الأساسيات" : "المتبقي للأهداف");
   setText("#advisor-reserve-allocation", formatMoney(plan.reserveAllocationFils));
   setText("#advisor-debt-allocation", formatMoney(plan.extraDebtFils));
   setText("#advisor-investment-allocation", formatMoney(plan.investmentFils));
-  setText("#advisor-reserve-caption", `هدف 3 أشهر: ${formatMoney(plan.emergencyTargetFils)} · رصيد نقدي: ${formatMoney(state.settings.cashFils)}`);
+  // المرحلة الأولى احتياطي أولي صغير، والثانية 3 أشهر كاملة — نسمّي الاثنين بالمبلغ (F43)
+  setText("#advisor-reserve-caption", `المرحلة 1: ${formatMoney(plan.minimumReserveFils ?? plan.stageOneTargetFils ?? 0)} · المرحلة 2 (3 أشهر): ${formatMoney(plan.emergencyTargetFils)} · رصيدك النقدي: ${formatMoney(state.settings.cashFils)}`);
   const priorityDebt = state.loans.filter((item) => ["active", "overdue"].includes(item.status) && item.balanceFils > 0 && item.interestRateKnown && item.annualRate > 0)
     .sort((a, b) => b.annualRate - a.annualRate)[0];
   setText("#advisor-debt-caption", priorityDebt ? `الأعلى بمعدل مسجل: ${priorityDebt.name} (${priorityDebt.annualRate.toLocaleString("ar-KW-u-nu-latn")}٪)` : "سجّل معدل كل قرض عشان نحدد الأولوية بدقة");
@@ -1237,7 +1496,7 @@ function renderAdvisor() {
   };
   setText("#advisor-phase-pill", phaseLabels[plan.phase] ?? "خطة مبدئية");
   const baselineMessage = baseline.source === "transactions"
-    ? "المعيشة محسوبة من متوسط آخر 3 أشهر مكتملة فيها مصروفات معتمدة. عدّل ميزانية الشهر من الإعدادات إذا كان المتوسط لا يمثل احتياجك القادم."
+    ? `المعيشة ${formatMoney(baseline.amountFils)} محسوبة من متوسط آخر ${countLabel(baseline.months, "month")} مكتملة فيها مصروفات معتمدة، بدون الأقساط (تُخصم لحالها). عدّل ميزانية الشهر من الإعدادات إذا كان المتوسط لا يمثل احتياجك القادم.`
     : baseline.source === "budget"
       ? `المعيشة مبنية على ميزانيتك المسجلة ${formatMoney(baseline.amountFils)}؛ بيانات الصرف المعتمدة موجودة في ${baseline.months.toLocaleString("ar-KW-u-nu-latn")} من آخر 3 أشهر مكتملة.`
       : "ما نقدر نحسب فائضاً موثوقاً للحين. حدد ميزانية مصروفاتك الشهرية من الإعدادات، أو اعتمد مصروفات 3 أشهر مكتملة.";
@@ -1275,6 +1534,7 @@ function openOnboarding() {
   if (!onboardingController) {
     onboardingController = mountOnboarding($("#onboarding-root"), {
       getSettings: () => state.settings,
+      getFixedFils: monthlyFixedFils,
       onApply: applyStarterPlan,
       onSkip: () => { state.ui.onboarded = true; saveState(); closeDialog(dialog); }
     });
@@ -1283,7 +1543,30 @@ function openOnboarding() {
   openDialog(dialog);
 }
 
-function applyStarterPlan(plan) {
+/* أقساط القروض النشطة + الالتزامات الشهرية — نفس مدخلات monthlySurplus في المستشار (F27) */
+function monthlyFixedFils() {
+  const commitmentsFils = state.monthlyCommitments.reduce((sum, item) => sum + monthlyCommitmentEquivalent(item), 0);
+  return commitmentsFils + debtSummary(state.loans, { todayISO: todayISO(), payments: state.debtPayments }).monthlyPaymentsFils;
+}
+
+async function applyStarterPlan(plan) {
+  // الخطة تكتب فوق أرقام قد تكون مضبوطة من قبل، فنعرض «قبل ← بعد» ونطلب الموافقة (F27)
+  const before = state.settings;
+  const emergencyGoal = state.goals.find((item) => item.name === "صندوق الطوارئ");
+  const rows = [
+    ["الدخل الشهري", before.incomeFils, plan.incomeFils],
+    ["ميزانية المصروف", before.budgetFils, plan.budgetFils],
+    ["رصيد الكاش", before.cashFils, plan.savingsFils],
+    ["احتياطي الأمان", before.safetyBufferFils, plan.safetyBufferFils],
+    ["هدف صندوق الطوارئ", emergencyGoal?.targetFils ?? 0, plan.emergencyTargetFils],
+    ["إضافة الطوارئ الشهرية", emergencyGoal?.monthlyFils ?? 0, plan.monthlySaveFils]
+  ].filter(([, from, to]) => from !== to);
+  const fixedFils = plan.fixedFils ?? monthlyFixedFils();
+  const warning = fixedFils > 0
+    ? `\nالخطة محسوبة بعد أقساطك والتزاماتك المسجلة (${formatMoney(fixedFils)} شهرياً).`
+    : "";
+  // أول تشغيل (كل القيم صفر) ما فيه شي ينكتب فوقه، فما نسأل
+  if (rows.some(([, from]) => from > 0) && !(await askConfirm(`نطبّق الخطة المبدئية؟\n${rows.map(([label, from, to]) => `${label}: ${formatMoney(from)} ← ${formatMoney(to)}`).join("\n")}${warning}`, { okLabel: "طبّق الخطة" }))) return;
   const settings = state.settings;
   settings.incomeFils = plan.incomeFils;
   settings.cashFils = plan.savingsFils;
@@ -1298,11 +1581,9 @@ function applyStarterPlan(plan) {
   if (goal) Object.assign(goal, { targetFils: plan.emergencyTargetFils, savedFils: saved, monthlyFils: plan.monthlySaveFils });
   else state.goals.push({ id: createId(), name: "صندوق الطوارئ", targetFils: plan.emergencyTargetFils, savedFils: saved, monthlyFils: plan.monthlySaveFils });
   state.ui.onboarded = true;
-  saveState();
   closeDialog($("#onboarding-dialog"));
-  renderAll({ investmentInputs: true });
   switchView("dashboard");
-  toast(keptIncomes ? "طبّقت الخطة. عندك أكثر من دخل مسجل فما غيّرتها، راجعها من الإعدادات." : "تم ترتيب كل شي حسب معاشك ✅");
+  commit(keptIncomes ? "طبّقت الخطة. عندك أكثر من دخل مسجل فما غيّرتها، راجعها من الإعدادات." : "تم ترتيب كل شي حسب معاشك ✅", { investmentInputs: true });
 }
 
 let spendingController = null;
@@ -1328,7 +1609,7 @@ let salaryPlanController = null;
 function salaryPlanModel() {
   const base = checkupModel();
   return { goals: state.goals, incomeFils: base.incomeFils, budgetFils: state.settings.budgetFils, commitmentsFils: base.commitmentsFils,
-    debtPaymentsFils: base.debtPaymentsFils, todayISO: todayISO(), salaryDay: state.settings.salaryDay };
+    debtPaymentsFils: base.debtPaymentsFils, livingFils: base.livingFils, todayISO: todayISO(), salaryDay: state.settings.salaryDay };
 }
 function renderSalaryPlan() {
   const root = $("#salary-plan-root");
@@ -1339,13 +1620,20 @@ function renderSalaryPlan() {
       onFund: () => {
         const result = fundGoals(state.goals, monthKeyOf(todayISO()));
         if (!result.count) { toast("كل أهدافك مموّلة هذا الشهر"); return; }
-        state.goals = result.goals; saveState(); renderAll();
-        toast(`أضفت ${formatMoney(result.addedFils)} لـ ${result.count.toLocaleString("ar-KW-u-nu-latn")} أهداف`);
+        const before = state.goals;
+        state.goals = result.goals;
+        commit(`أضفت ${formatMoney(result.addedFils)} لـ ${countLabel(result.count, "goal")}`, { undo: () => { state.goals = before; commit("رجّعت التحويل"); } });
       },
-      onApplySuggestion: async (allocation) => {
-        if (!(await askConfirm("نغيّر الإضافة الشهرية لأهدافك حسب التوزيع المقترح (الطوارئ أولاً)؟", { okLabel: "طبّق" }))) return;
+      onApplySuggestion: async ({ allocation, changes }) => {
+        if (!changes.length) { toast("المقترح نفس إضافاتك الحالية"); return; }
+        const lines = changes.map((change) => `${change.name}: ${formatMoney(change.fromFils)} ← ${formatMoney(change.toFils)}`).join("\n");
+        if (!(await askConfirm(`نغيّر الإضافة الشهرية لهذه الأهداف (الطوارئ أولاً)؟\n${lines}`, { okLabel: "طبّق" }))) return;
+        const before = state.goals.map((goal) => ({ id: goal.id, monthlyFils: goal.monthlyFils }));
         state.goals.forEach((goal) => { if (allocation[goal.id] !== undefined) goal.monthlyFils = allocation[goal.id]; });
-        saveState(); renderAll(); toast("تم تحديث إضافات الأهداف");
+        commit("تم تحديث إضافات الأهداف", { undo: () => {
+          before.forEach((row) => { const goal = state.goals.find((item) => item.id === row.id); if (goal) goal.monthlyFils = row.monthlyFils; });
+          commit("رجّعت الإضافات");
+        } });
       }
     });
   }
@@ -1370,8 +1658,8 @@ function checkupModel() {
   const debt = debtSummary(state.loans, { incomeFils, todayISO: today, payments: state.debtPayments });
   const commitmentsFils = state.monthlyCommitments.filter((item) => item.status !== "paused").reduce((sum, item) => sum + monthlyCommitmentEquivalent(item), 0);
   const baseline = advisorLivingBaseline(today);
-  const fixed = commitmentsFils + debt.monthlyPaymentsFils;
-  const livingFils = baseline.source === "transactions" ? Math.max(baseline.amountFils - fixed, 0) : baseline.amountFils;
+  // المتوسط نفسه بلا خصم ثانٍ للثوابت: فئة «قسط» مستبعدة أصلاً من متوسط المعيشة (F5)
+  const livingFils = baseline.amountFils;
   const stocksFils = state.stockHoldings.reduce((sum, holding) => sum + (calculateStockPosition(holding)?.currentValueFils ?? 0), 0);
   return {
     incomeFils, livingFils, commitmentsFils, debtPaymentsFils: debt.monthlyPaymentsFils, totalDebtFils: debt.totalBalanceFils,
@@ -1428,7 +1716,20 @@ function renderAll({ investmentInputs = false } = {}) {
   renderBackupReminder();
 }
 
+/* F33: الخانة الغلط تتعلّم (حد أحمر + aria-invalid) وتشير لرسالة الخطأ، وتنمسح العلامة أول ما يعدّلها */
+function invalidField(selector, errorSelector, focusOptions = {}) {
+  const input = $(selector);
+  if (!input) return;
+  input.setAttribute("aria-invalid", "true");
+  if (errorSelector) input.setAttribute("aria-describedby", errorSelector.slice(1));
+  input.focus(focusOptions);
+}
+function clearInvalid(root) {
+  root?.querySelectorAll?.('[aria-invalid="true"]').forEach((input) => input.removeAttribute("aria-invalid"));
+}
+
 function openDialog(dialog) {
+  clearInvalid(dialog);
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.setAttribute("open", "");
 }
@@ -1495,11 +1796,15 @@ async function prepareStatementImport(file) {
 function renderStatementPreview(batch) {
   const { stats, transactions } = batch;
   setText("#statement-preview-period", stats.startDate ? `${formatDate(stats.startDate)} — ${formatDate(stats.endDate)}` : "كل المصروفات الموجودة مضافة من قبل");
-  setText("#statement-preview-count", `${transactions.length.toLocaleString("ar-KW-u-nu-latn")} عملية`);
+  setText("#statement-preview-count", countLabel(transactions.length, "transaction"));
   setText("#statement-preview-total", formatMoney(stats.totalFils));
   setText("#statement-preview-duplicates", stats.duplicates.toLocaleString("ar-KW-u-nu-latn"));
-  setText("#statement-preview-excluded", (stats.credits + stats.transfers).toLocaleString("ar-KW-u-nu-latn"));
+  setText("#statement-preview-excluded", `${(stats.credits + stats.transfers).toLocaleString("ar-KW-u-nu-latn")}${stats.transfersFils ? ` · منها مصروفات مستبعدة ${formatMoney(stats.transfersFils)}` : ""}`);
   setText("#statement-preview-skipped", (stats.invalidRows + stats.outOfRange).toLocaleString("ar-KW-u-nu-latn"));
+  setText("#statement-preview-possible", (stats.possibleDuplicates ?? 0).toLocaleString("ar-KW-u-nu-latn"));
+  setText("#statement-preview-note", stats.hasBalanceColumn
+    ? "الملف فيه عمود الرصيد، فالمقارنة بالرصيد بعد العملية تفرّق بين شراءين متشابهين في نفس اليوم."
+    : "ما فيه عمود رصيد في الملف، فالعمليتان المتشابهتان في نفس اليوم وبنفس المبلغ تظهران «قد تكون مكررة» لمراجعتك.");
   $("#statement-preview-list").innerHTML = transactions.slice(-12).reverse().map((item) => `
     <div class="statement-preview-item"><span>${escapeHTML(item.merchant)}<small>${escapeHTML(item.category)} · ${escapeHTML(formatDate(item.date))}</small></span><strong>−${escapeHTML(formatMoney(item.amountFils))}</strong></div>`).join("");
 }
@@ -1531,35 +1836,65 @@ function submitStatementImport(event) {
   saveState();
   renderAll();
   closeDialog($("#statement-import-dialog"));
+  /* نفتح التحليل بعد الحفظ حتى يرى المستخدم أثر الاستيراد فوراً */
   switchView("dashboard");
   $("#behavior-panel").closest("details").open = true;
   requestAnimationFrame(() => $("#behavior-panel").scrollIntoView({ behavior: "smooth", block: "start" }));
-  toast(`تم استيراد ${transactions.length.toLocaleString("ar-KW-u-nu-latn")} عملية وتحليلها`);
+  const possible = transactions.filter((item) => item.possibleDuplicate).length;
+  commit(possible
+    ? `استوردت ${countLabel(transactions.length, "transaction")} · ${countLabel(possible, "transaction")} علّمتها «قد تكون مكررة» لمراجعتك`
+    : `تم استيراد ${countLabel(transactions.length, "transaction")} وتحليلها`, { render: false });
 }
 
-function openTransaction(item = null, imported = null) {
+const INCOME_CATEGORIES = ["راتب", "أخرى"];
+function renderTransactionCategories(kind, selected = "") {
+  // التصنيفات المخصصة للمصروف ما تنفع للدخل («مطاعم» ليست مصدر دخل) — F52
+  const list = kind === "income" ? INCOME_CATEGORIES : categories.filter((category) => category !== "راتب");
+  $("#transaction-category").innerHTML = list.map((category) => `<option value="${escapeHTML(category)}">${escapeHTML(category)}</option>`).join("");
+  $("#transaction-category").value = list.includes(selected) ? selected : (kind === "income" ? "راتب" : "أخرى");
+}
+
+let pendingDraftId = "";
+let categoryTouched = false;
+function openTransaction(item = null, imported = null, draft = null) {
   const form = $("#transaction-form");
   form.reset();
   $("#transaction-error").textContent = "";
-  $("#transaction-dialog-title").textContent = item ? "تعديل العملية" : imported ? "راجع العملية" : "عملية جديدة";
+  $("#transaction-dialog-title").textContent = item ? "تعديل العملية" : draft ? "أدخل المبلغ بالدينار" : imported ? "راجع العملية" : "عملية جديدة";
   $("#transaction-id").value = item?.id ?? "";
-  $("#transaction-kind").value = item?.kind ?? "expense";
+  const kind = item?.kind ?? imported?.kind ?? "expense";
+  $("#transaction-kind").value = kind;
   $("#transaction-amount").value = item ? moneyInput(item.amountFils) : imported ? moneyInput(imported.amountFils) : "";
-  $("#transaction-merchant").value = item?.merchant ?? imported?.merchant ?? "";
-  $("#transaction-category").value = item?.category ?? imported?.category ?? "أخرى";
-  $("#transaction-date").value = item?.date ?? todayISO();
+  $("#transaction-merchant").value = item?.merchant ?? imported?.merchant ?? draft?.merchant ?? "";
+  renderTransactionCategories(kind, item?.category ?? imported?.category ?? (draft?.merchant ? inferCategory(draft.merchant) : ""));
+  $("#transaction-date").value = item?.date ?? draft?.dateISO ?? todayISO();
+  $("#transaction-date").max = todayISO();
   $("#transaction-reviewed").checked = item ? true : !imported;
   pendingTransactionSource = item?.source ?? (imported ? "bank-text" : "manual");
+  pendingDraftId = draft?.id ?? "";
+  categoryTouched = Boolean(item || imported);
+  updateMoneyPreviews(form);
   openDialog($("#transaction-dialog"));
 }
 
-function submitTransaction(event) {
+async function submitTransaction(event) {
   event.preventDefault();
   const amountFils = parseMoney($("#transaction-amount").value);
   const merchant = $("#transaction-merchant").value.trim();
   const date = $("#transaction-date").value;
-  if (!amountFils || !merchant || !validDate(date)) {
-    $("#transaction-error").textContent = "أدخل مبلغاً صحيحاً، اسماً، وتاريخاً صالحاً.";
+  const today = todayISO();
+  // رسالة لكل حقل بدل جملة واحدة عامة (F33)
+  if (amountFils === null) { $("#transaction-error").textContent = "المبلغ بالدينار وبثلاث خانات بعد الفاصلة كحد أقصى، مثل 12.500."; invalidField("#transaction-amount", "#transaction-error"); return; }
+  if (!amountFils) { $("#transaction-error").textContent = "المبلغ لازم يكون أكبر من صفر."; invalidField("#transaction-amount", "#transaction-error"); return; }
+  if (!merchant) { $("#transaction-error").textContent = "اكتب اسم التاجر أو مصدر الدخل."; invalidField("#transaction-merchant", "#transaction-error"); return; }
+  if (!validDate(date)) { $("#transaction-error").textContent = "اختر تاريخاً صالحاً."; invalidField("#transaction-date", "#transaction-error"); return; }
+  if (date > today) { $("#transaction-error").textContent = "ما نسجل عملية بتاريخ المستقبل."; invalidField("#transaction-date", "#transaction-error"); return; }
+  if (date < "2000-01-01") { $("#transaction-error").textContent = "التاريخ قديم جداً؛ راجع السنة."; invalidField("#transaction-date", "#transaction-error"); return; }
+  const incomeFils = totalMonthlyIncome(state.incomes, state.settings.incomeFils);
+  // مبلغ أكبر من عشرة أضعاف الدخل غالباً خطأ في الفاصلة (12500 بدل 12.500) — F42
+  if (incomeFils > 0 && amountFils > incomeFils * 10 &&
+      !(await askConfirm(`${formatMoney(amountFils)} أكبر من دخلك الشهري بعشر مرات. متأكد أن الفاصلة في مكانها؟`, { okLabel: "نعم، المبلغ صحيح" }))) {
+    $("#transaction-amount").focus();
     return;
   }
   const id = $("#transaction-id").value;
@@ -1576,17 +1911,55 @@ function submitTransaction(event) {
   if (["bank-text", "bank-statement"].includes(record.source)) {
     record.fingerprint = transactionFingerprint({ amountFils: record.amountFils, merchant: record.rawMerchant || record.merchant, date: record.date });
   }
-  if (["bank-text", "bank-statement"].includes(record.source) && state.transactions.some((item) =>
+  // الفحص للسجل الجديد فقط: تعديل سجل موجود ما يصير «مكرراً لنفسه» (F29)
+  if (!existing && ["bank-text", "bank-statement"].includes(record.source) && state.transactions.some((item) =>
     item.id !== existing?.id && (item.fingerprint === record.fingerprint ||
     (item.amountFils === record.amountFils && item.date === record.date &&
     merchantKey(item.rawMerchant || item.merchant) === merchantKey(record.rawMerchant || record.merchant))))) {
     $("#transaction-error").textContent = "في عملية مستوردة مطابقة بنفس اليوم. راجع القائمة قبل إضافتها مرة ثانية.";
     return;
   }
-  if (record.reviewed) learnMerchant(record);
+  if (record.reviewed) {
+    const affected = wouldRenameOthers(record);
+    if (affected >= 2 && !(await askConfirm(`عندك ${countLabel(affected, "transaction")} غيرها بنفس اسم البنك الخام. نخلي «${cutText(record.merchant, 30)}» هو الاسم المتعلَّم لكل عملية قادمة منه؟`, { okLabel: "نعم، تعلّمه" }))) {
+      // ما نتعلم القاعدة، لكن نحفظ تعديل هذه العملية
+    } else {
+      learnMerchant(record);
+    }
+  }
   if (existing && record.reviewed) existing.possibleDuplicate = false;
   if (existing) Object.assign(existing, record); else state.transactions.push(record);
-  saveState(); renderAll(); closeDialog($("#transaction-dialog")); toast(existing ? "تم تعديل العملية" : "تمت إضافة العملية");
+  if (pendingDraftId) { state.bankDrafts = state.bankDrafts.filter((item) => item.id !== pendingDraftId); pendingDraftId = ""; }
+  closeDialog($("#transaction-dialog"));
+  commit(existing ? "تم تعديل العملية" : "تمت إضافة العملية");
+}
+
+/* F7: معاينة مباشرة «= 12.500 د.ك» تحت كل خانة دينار، حتى يبيّن خطأ الفاصلة قبل الحفظ. */
+function moneyPreviewFor(input) {
+  const unit = input.closest(".money-field")?.querySelector("b")?.textContent?.trim();
+  if (unit !== "د.ك") return null;
+  const raw = input.value.trim();
+  if (!raw) return { text: "", bad: false };
+  const fils = parseMoney(raw);
+  if (fils === null) return { text: "ما فهمت المبلغ — اكتبه مثل 12.500", bad: true };
+  return { text: `= ${formatMoney(fils)}`, bad: false };
+}
+function updateMoneyPreview(input) {
+  const info = moneyPreviewFor(input);
+  if (!info) return;
+  const field = input.closest(".money-field");
+  let preview = field.nextElementSibling;
+  if (!preview?.classList?.contains("money-preview")) {
+    preview = document.createElement("small");
+    preview.className = "money-preview";
+    field.after(preview);
+  }
+  preview.textContent = info.text;
+  preview.classList.toggle("is-bad", info.bad);
+  preview.hidden = !info.text;
+}
+function updateMoneyPreviews(root) {
+  $$(".money-field input", root).forEach(updateMoneyPreview);
 }
 
 function renderCommitmentCategoryOptions(selected = "") {
@@ -1616,7 +1989,7 @@ function openCommitment(commitment = null) {
   $("#commitment-due-date").value = commitment?.dueDate ?? todayISO();
   $("#commitment-recurrence").value = commitment?.recurrence ?? "monthly";
   $("#commitment-payment-method").value = commitment?.paymentMethod ?? "bank";
-  $("#commitment-status").value = commitment?.status === "paused" ? "paused" : "active";
+  $("#commitment-status").value = ["paused", "completed"].includes(commitment?.status) ? commitment.status : "active";
   $("#commitment-notes").value = commitment?.notes ?? "";
   openDialog($("#commitment-dialog"));
 }
@@ -1629,10 +2002,13 @@ function submitCommitment(event) {
   const categoryValue = $("#commitment-category").value;
   const customCategory = $("#commitment-custom-category").value.trim();
   const category = categoryValue === "__custom" ? customCategory : categoryValue;
-  if (!name || !amountFils || !validDate(dueDate) || !category) {
-    $("#commitment-error").textContent = "راجع الاسم والتصنيف والمبلغ وتاريخ الاستحقاق.";
-    return;
-  }
+  if (!name) { $("#commitment-error").textContent = "اكتب اسم الالتزام."; invalidField("#commitment-name", "#commitment-error"); return; }
+  if (!category) { $("#commitment-error").textContent = "اختر تصنيفاً أو اكتب تصنيفاً مخصصاً."; return; }
+  if (amountFils === null) { $("#commitment-error").textContent = "المبلغ بالدينار مثل 250.000."; invalidField("#commitment-amount", "#commitment-error"); return; }
+  if (!amountFils) { $("#commitment-error").textContent = "المبلغ لازم يكون أكبر من صفر."; invalidField("#commitment-amount", "#commitment-error"); return; }
+  if (!validDate(dueDate)) { $("#commitment-error").textContent = "اختر تاريخ استحقاق صالحاً."; invalidField("#commitment-due-date", "#commitment-error"); return; }
+  // حدود منطقية: 1900 أو 9999 غالباً خطأ بالسنة (F42)
+  if (dueDate < "2000-01-01" || dueDate > addDaysISO(todayISO(), 3653)) { $("#commitment-error").textContent = "راجع السنة: التاريخ لازم يكون بين 2000 وعشر سنين من اليوم."; invalidField("#commitment-due-date", "#commitment-error"); return; }
   if (categoryValue === "__custom" && !state.customCommitmentCategories.includes(category)) state.customCommitmentCategories.push(category.slice(0, 60));
   const id = $("#commitment-id").value;
   const existing = state.monthlyCommitments.find((item) => item.id === id);
@@ -1641,11 +2017,13 @@ function submitCommitment(event) {
     recurrence: Object.hasOwn(commitmentRecurrences, $("#commitment-recurrence").value) ? $("#commitment-recurrence").value : "monthly",
     paymentMethod: ["bank", "credit_card", "cash", "other"].includes($("#commitment-payment-method").value) ? $("#commitment-payment-method").value : "other",
     notes: $("#commitment-notes").value.trim().slice(0, 500),
-    status: $("#commitment-status").value === "paused" ? "paused" : "active",
+    status: ["paused", "completed"].includes($("#commitment-status").value) ? $("#commitment-status").value : "active",
     createdAt: existing?.createdAt ?? new Date().toISOString()
   };
   if (existing) Object.assign(existing, record); else state.monthlyCommitments.push(record);
-  saveState(); updateCommitmentCategoryFilterOptions(); renderAll(); closeDialog($("#commitment-dialog")); toast(existing ? "تم تعديل الالتزام" : "تمت إضافة الالتزام");
+  updateCommitmentCategoryFilterOptions();
+  closeDialog($("#commitment-dialog"));
+  commit(existing ? "تم تعديل الالتزام" : "تمت إضافة الالتزام");
 }
 
 function openLoan(loan = null) {
@@ -1661,43 +2039,91 @@ function openLoan(loan = null) {
   $("#loan-balance").value = loan ? moneyInput(loan.balanceFils) : "";
   $("#loan-installment").value = loan ? moneyInput(loan.installmentFils) : "";
   $("#loan-paid").value = loan ? moneyInput(loan.totalPaidFils ?? Math.max((loan.originalAmountFils ?? loan.balanceFils) - loan.balanceFils, 0)) : "0.000";
-  $("#loan-rate").value = loan?.annualRate ?? 0;
+  $("#loan-rate").value = loan ? (loan.interestRateKnown ? loan.annualRate : "") : "";
   $("#loan-day").value = loan?.dueDay ?? 1;
   $("#loan-remaining-installments").value = loan?.remainingInstallments ?? "";
   $("#loan-start-date").value = loan?.startDate ?? "";
   $("#loan-end-date").value = loan?.endDate ?? "";
+  $("#loan-start-date").max = todayISO();
+  updateMoneyPreviews($("#loan-form"));
   openDialog($("#loan-dialog"));
 }
 
-function submitLoan(event) {
+async function submitLoan(event) {
   event.preventDefault();
   const name = $("#loan-name").value.trim();
   const originalAmountFils = parseMoney($("#loan-original").value);
   const balanceFils = parseMoney($("#loan-balance").value);
   const installmentFils = parseMoney($("#loan-installment").value);
   const totalPaidInput = parseMoney($("#loan-paid").value);
-  const annualRate = Number($("#loan-rate").value);
-  const dueDay = Number($("#loan-day").value);
+  const rateRaw = $("#loan-rate").value.trim();
+  const annualRate = rateRaw === "" ? 0 : parseRate(rateRaw, { min: 0, max: 100 });
+  const dueDay = parseCount($("#loan-day").value, { min: 1, max: 31 });
   const remainingRaw = $("#loan-remaining-installments").value.trim();
-  const remainingInstallmentCount = remainingRaw === "" ? null : Number(remainingRaw);
+  const remainingInstallmentCount = remainingRaw === "" ? null : parseCount(remainingRaw, { min: 0, max: 1200 });
   const startDate = $("#loan-start-date").value;
   const endDate = $("#loan-end-date").value;
   const status = $("#loan-status").value;
-  if (!name || !originalAmountFils || balanceFils === null || balanceFils > originalAmountFils || !installmentFils || totalPaidInput === null || !Number.isFinite(annualRate) || annualRate < 0 || annualRate > 100 || !Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31 || (remainingInstallmentCount !== null && (!Number.isInteger(remainingInstallmentCount) || remainingInstallmentCount < 0 || remainingInstallmentCount > 1200)) || (startDate && !validDate(startDate)) || (endDate && !validDate(endDate)) || (startDate && endDate && endDate < startDate) || (status === "completed" && balanceFils !== 0)) {
-    $("#loan-error").textContent = "راجع الاسم والمبلغ الأصلي والرصيد والقسط والنسبة والتواريخ."; return;
+  const error = $("#loan-error");
+  if (!name) { error.textContent = "اكتب اسم القرض."; invalidField("#loan-name", "#loan-error"); return; }
+  if (!originalAmountFils) { error.textContent = "المبلغ الأصلي بالدينار وأكبر من صفر."; invalidField("#loan-original", "#loan-error"); return; }
+  if (balanceFils === null) { error.textContent = "الرصيد المتبقي بالدينار مثل 1500.000."; invalidField("#loan-balance", "#loan-error"); return; }
+  // المرابحة يزيد مستحقها عن أصل المبلغ، فهذا وضع طبيعي ما يُرفض — نكتفي بالتنبيه (F45)
+  if (!installmentFils && balanceFils > 0) { error.textContent = "القسط الشهري بالدينار وأكبر من صفر."; invalidField("#loan-installment", "#loan-error"); return; }
+  if (totalPaidInput === null) { error.textContent = "إجمالي المدفوع بالدينار، أو 0.000."; invalidField("#loan-paid", "#loan-error"); return; }
+  if (annualRate === null) { error.textContent = "النسبة السنوية رقم من 0 إلى 100، مثل 4.25."; invalidField("#loan-rate", "#loan-error"); return; }
+  if (dueDay === null) { error.textContent = "يوم الخصم من 1 إلى 31."; invalidField("#loan-day", "#loan-error"); return; }
+  if (remainingRaw !== "" && remainingInstallmentCount === null) { error.textContent = "الأقساط المتبقية عدد صحيح من 0 إلى 1200، أو اتركها فارغة."; invalidField("#loan-remaining-installments", "#loan-error"); return; }
+  if (startDate && !validDate(startDate)) { error.textContent = "تاريخ البداية غير صالح."; invalidField("#loan-start-date", "#loan-error"); return; }
+  if (endDate && !validDate(endDate)) { error.textContent = "تاريخ النهاية غير صالح."; invalidField("#loan-end-date", "#loan-error"); return; }
+  if (startDate && endDate && endDate < startDate) { error.textContent = "تاريخ النهاية قبل تاريخ البداية."; invalidField("#loan-end-date", "#loan-error"); return; }
+  if (status === "completed" && balanceFils !== 0) { error.textContent = "القرض المكتمل رصيده صفر."; invalidField("#loan-balance", "#loan-error"); return; }
+  error.textContent = "";
+  // قسط أكبر من الرصيد كله غالباً خطأ كتابة (9000 بدل 90.000) — تأكيد ناعم بدل الحفظ بصمت (F42)
+  if (balanceFils > 0 && installmentFils > balanceFils &&
+      !(await askConfirm(`القسط الشهري (${formatMoney(installmentFils)}) أكبر من الرصيد المتبقي كله (${formatMoney(balanceFils)}). متأكد من الرقمين؟`, { okLabel: "نعم، صحيح" }))) {
+    invalidField("#loan-installment", "#loan-error");
+    return;
   }
   const id = $("#loan-id").value;
   const existing = state.loans.find((item) => item.id === id);
   const record = {
     id: existing?.id ?? createId(), name: name.slice(0, 60), lender: $("#loan-lender").value.trim().slice(0, 60),
     type: debtTypes.includes($("#loan-type").value) ? $("#loan-type").value : "أخرى",
-    originalAmountFils, originalAmountKnown: true, balanceFils, installmentFils, annualRate, interestRateKnown: true, dueDay, startDate, endDate,
+    originalAmountFils, originalAmountKnown: true, balanceFils, installmentFils, annualRate, interestRateKnown: rateRaw !== "", dueDay, startDate, endDate,
     remainingInstallments: remainingInstallmentCount,
-    totalPaidFils: Math.max(totalPaidInput, originalAmountFils - balanceFils),
-    status: ["active", "completed", "overdue", "stopped"].includes(status) ? status : "active"
+    totalPaidFils: Math.max(totalPaidInput, Math.max(originalAmountFils - balanceFils, 0)),
+    // رصيد صفر يعني القرض انتهى، فما يبقى «نشطاً» بقسط شهري (F49)
+    status: balanceFils === 0 ? "completed" : (["active", "overdue", "stopped"].includes(status) ? status : "active")
   };
   if (existing) Object.assign(existing, record); else state.loans.push(record);
-  saveState(); renderAll(); closeDialog($("#loan-dialog")); toast(existing ? "تم تعديل القرض" : "تمت إضافة القرض");
+  closeDialog($("#loan-dialog"));
+  const murabaha = balanceFils > originalAmountFils;
+  commit(existing ? "تم تعديل القرض" : "تمت إضافة القرض");
+  if (murabaha) toast("الرصيد أكبر من أصل المبلغ — طبيعي في المرابحة، لأن المستحق يشمل الربح.");
+}
+
+/* F17: ما كان فيه أي طريقة تسجّل خصم القسط، فالرصيد يبقى قديماً والأقساط المتبقية ما تنقص. */
+function payLoanInstallment(loanId, dueDate) {
+  const loan = state.loans.find((item) => item.id === loanId);
+  if (!loan || !validDate(dueDate)) return;
+  if (state.debtPayments.some((item) => item.debtId === loanId && sameDueMonth(item.dueDate, dueDate) && item.status !== "reversed")) {
+    toast("القسط مسجّل مدفوعاً من قبل");
+    return;
+  }
+  const applied = Math.min(loan.installmentFils, loan.balanceFils);
+  const payment = { id: createId(), debtId: loanId, amountFils: loan.installmentFils, dueDate, paidAt: todayISO(), status: "paid" };
+  const before = { balanceFils: loan.balanceFils, totalPaidFils: loan.totalPaidFils, remainingInstallments: loan.remainingInstallments, status: loan.status };
+  state.debtPayments.push(payment);
+  loan.balanceFils = Math.max(loan.balanceFils - applied, 0);
+  loan.totalPaidFils = (loan.totalPaidFils ?? 0) + applied;
+  if (Number.isInteger(loan.remainingInstallments)) loan.remainingInstallments = Math.max(loan.remainingInstallments - 1, 0);
+  if (loan.balanceFils === 0) loan.status = "completed";
+  commit(`سجّلت قسط ${cutText(loan.name, 24)} · ${formatMoney(applied)}`, { undo: () => {
+    state.debtPayments = state.debtPayments.filter((item) => item.id !== payment.id);
+    Object.assign(loan, before);
+    commit("رجّعت القسط");
+  } });
 }
 
 let currentExtraPaymentSimulation = null;
@@ -1725,6 +2151,7 @@ function updateExtraPaymentSimulation() {
     return;
   }
   $("#extra-payment-simulation").innerHTML = `<div class="simulation-grid">
+    ${simulation.unusedFils > 0 ? `<div><span>المطبّق من دفعتك</span><strong>${escapeHTML(formatMoney(simulation.appliedFils))} <small>(${escapeHTML(formatMoney(simulation.unusedFils))} أكثر من الرصيد)</small></strong></div>` : `<div><span>المطبّق من دفعتك</span><strong>${escapeHTML(formatMoney(simulation.appliedFils))}</strong></div>`}
     <div><span>الرصيد قبل الدفعة</span><strong>${escapeHTML(formatMoney(simulation.beforeBalanceFils))}</strong></div>
     <div><span>الرصيد بعد الدفعة</span><strong>${escapeHTML(formatMoney(simulation.afterBalanceFils))}</strong></div>
     <div><span>الأشهر المتوقع اختصارها</span><strong>${simulation.monthsShortened.toLocaleString("ar-KW-u-nu-latn")}</strong></div>
@@ -1743,13 +2170,20 @@ function submitExtraPayment(event) {
   state.extraPayments.push({ id: createId(), debtId: loan.id, amountFils: simulation.appliedFils, date: todayISO(), balanceBeforeFils: simulation.beforeBalanceFils, balanceAfterFils: simulation.afterBalanceFils });
   loan.balanceFils = simulation.afterBalanceFils;
   loan.totalPaidFils = Math.max((loan.totalPaidFils ?? 0) + simulation.appliedFils, loan.originalAmountFils - loan.balanceFils);
-  loan.remainingInstallments = simulation.expectedMonths;
-  loan.endDate = simulation.expectedEndDate;
+  // الدفعة الإضافية ما تأخّر النهاية: ما نزيد الأقساط المتبقية ولا نكتب تاريخاً أبعد من المسجل (F15)
+  loan.remainingInstallments = Number.isInteger(loan.remainingInstallments)
+    ? Math.min(loan.remainingInstallments, simulation.expectedMonths) : simulation.expectedMonths;
+  if (loan.balanceFils === 0) loan.endDate = todayISO();
+  else if (!loan.endDate || (simulation.expectedEndDate && simulation.expectedEndDate < loan.endDate)) loan.endDate = simulation.expectedEndDate;
   if (loan.balanceFils === 0) loan.status = "completed";
-  saveState(); renderAll(); closeDialog($("#extra-payment-dialog")); toast("تم تسجيل الدفعة الإضافية");
+  closeDialog($("#extra-payment-dialog"));
+  commit(simulation.unusedFils > 0
+    ? `سجّلت ${formatMoney(simulation.appliedFils)} — الباقي ${formatMoney(simulation.unusedFils)} أكثر من الرصيد`
+    : "تم تسجيل الدفعة الإضافية");
 }
 
 let scannedLoanCandidates = [];
+let discardingLoanScan = false;
 let scannedImageURLs = [];
 let loanScanInProgress = false;
 let loanScanState = "idle";
@@ -1780,16 +2214,15 @@ function openImageLightbox(index) {
   if (!item) return;
   $("#lightbox-image").src = item.url;
   $("#lightbox-image").alt = `صورة ${item.name}`;
-  $("#image-lightbox").hidden = false;
-  document.body.style.overflow = "hidden";
+  // نافذة المراجعة في الطبقة العلوية، فعنصر عادي يختفي تحتها: الصورة لازم تكون dialog كذلك (F22)
+  openDialog($("#image-lightbox"));
 }
 
 function closeImageLightbox() {
   const lightbox = $("#image-lightbox");
   if (!lightbox) return;
-  lightbox.hidden = true;
+  if (lightbox.open) closeDialog(lightbox);
   $("#lightbox-image").removeAttribute("src");
-  document.body.style.overflow = "";
 }
 
 function openLoanScanner() {
@@ -1846,25 +2279,30 @@ async function prepareOCRImage(file) {
 }
 
 function renderScannedLoans() {
-  $("#loan-scan-results").innerHTML = scannedLoanCandidates.map((loan, index) => `
+  const amountTag = (warning, value, missing) => warning ? `<small class="field-confidence">${warning}</small>` : value ? '<small class="field-confidence clear">مقروء</small>' : `<small class="field-confidence">${missing}</small>`;
+  $("#loan-scan-results").innerHTML = scannedLoanCandidates.map((loan, index) => {
+    const warn = scanAmountWarnings(loan);
+    const confidence = loan.confidence === "high" && Object.keys(warn).length ? "medium" : loan.confidence;
+    return `
     <article class="scan-card" data-scan-index="${index}">
-      <div class="scan-card-head"><strong>القرض ${index + 1}</strong><span class="confidence ${loan.confidence}">${loan.confidence === "high" ? "قراءة واضحة" : loan.confidence === "medium" ? "راجع البيانات" : "أكمل البيانات"}</span></div>
+      <div class="scan-card-head"><strong>القرض ${index + 1}</strong><span class="confidence ${confidence}">${confidence === "high" ? "قراءة واضحة" : confidence === "medium" ? "راجع البيانات" : "أكمل البيانات"}</span></div>
       <div class="form-grid">
         <label class="field ${loan.name ? "" : "needs-review"}"><span>اسم القرض ${loan.name ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — يرجى التأكيد</small>'}</span><input data-scan-field="name" maxlength="60" value="${escapeHTML(loan.name ?? "")}" placeholder="غير واضح — يرجى التأكيد"></label>
         <label class="field ${loan.lender ? "" : "needs-review"}"><span>البنك / الجهة ${loan.lender ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — يرجى التأكيد</small>'}</span><input data-scan-field="lender" maxlength="60" value="${escapeHTML(loan.lender ?? "")}" placeholder="غير واضح — يرجى التأكيد"></label>
         <label class="field"><span>نوع القرض</span><select data-scan-field="type">${debtTypes.map((type) => `<option value="${escapeHTML(type)}" ${type === (loan.type ?? "أخرى") ? "selected" : ""}>${escapeHTML(type)}</option>`).join("")}</select></label>
-        <label class="field ${loan.originalAmountFils ? "" : "needs-review"}"><span>المبلغ الأصلي ${loan.originalAmountFils ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — اختياري</small>'}</span><div class="money-field"><input data-scan-field="original" inputmode="decimal" value="${loan.originalAmountFils ? moneyInput(loan.originalAmountFils) : ""}" placeholder="غير واضح"><b>د.ك</b></div></label>
+        <label class="field ${loan.originalAmountFils && !warn.original ? "" : "needs-review"}"><span>المبلغ الأصلي ${amountTag(warn.original, loan.originalAmountFils, "غير واضح — اختياري")}</span><div class="money-field"><input data-scan-field="original" inputmode="decimal" value="${loan.originalAmountFils ? moneyInput(loan.originalAmountFils) : ""}" placeholder="غير واضح"><b>د.ك</b></div></label>
       </div>
       <div class="form-grid">
-        <label class="field ${loan.balanceFils ? "" : "needs-review"}"><span>الرصيد المتبقي ${loan.balanceFils ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — يرجى التأكيد</small>'}</span><div class="money-field"><input data-scan-field="balance" inputmode="decimal" value="${loan.balanceFils ? moneyInput(loan.balanceFils) : ""}" placeholder="غير واضح"><b>د.ك</b></div></label>
-        <label class="field ${loan.installmentFils ? "" : "needs-review"}"><span>القسط الشهري ${loan.installmentFils ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — يرجى التأكيد</small>'}</span><div class="money-field"><input data-scan-field="installment" inputmode="decimal" value="${loan.installmentFils ? moneyInput(loan.installmentFils) : ""}" placeholder="غير واضح"><b>د.ك</b></div></label>
+        <label class="field ${loan.balanceFils && !warn.balance ? "" : "needs-review"}"><span>الرصيد المتبقي ${amountTag(warn.balance, loan.balanceFils, "غير واضح — يرجى التأكيد")}</span><div class="money-field"><input data-scan-field="balance" inputmode="decimal" value="${loan.balanceFils ? moneyInput(loan.balanceFils) : ""}" placeholder="غير واضح"><b>د.ك</b></div></label>
+        <label class="field ${loan.installmentFils && !warn.installment ? "" : "needs-review"}"><span>القسط الشهري ${amountTag(warn.installment, loan.installmentFils, "غير واضح — يرجى التأكيد")}</span><div class="money-field"><input data-scan-field="installment" inputmode="decimal" value="${loan.installmentFils ? moneyInput(loan.installmentFils) : ""}" placeholder="غير واضح"><b>د.ك</b></div></label>
         <label class="field ${loan.startDate ? "" : "needs-review"}"><span>تاريخ البداية ${loan.startDate ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — اختياري</small>'}</span><input data-scan-field="start" type="date" value="${escapeHTML(loan.startDate ?? "")}"></label>
         <label class="field ${loan.endDate ? "" : "needs-review"}"><span>تاريخ النهاية ${loan.endDate ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — اختياري</small>'}</span><input data-scan-field="end" type="date" value="${escapeHTML(loan.endDate ?? "")}"></label>
-        <label class="field"><span>نسبة سنوية <small class="field-confidence">اتركها فارغة إذا غير واضحة</small></span><div class="money-field"><input data-scan-field="rate" type="number" min="0" max="100" step="0.25" value="${loan.interestRateKnown ? loan.annualRate : ""}" placeholder="غير واضح"><b>٪</b></div></label>
-        <label class="field ${loan.dueDay ? "" : "needs-review"}"><span>يوم الاستحقاق ${loan.dueDay ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — يرجى التأكيد</small>'}</span><input data-scan-field="day" type="number" min="1" max="31" value="${loan.dueDay ?? ""}" placeholder="غير واضح"></label>
+        <label class="field"><span>نسبة سنوية <small class="field-confidence">اتركها فارغة إذا غير واضحة</small></span><div class="money-field"><input data-scan-field="rate" type="text" inputmode="decimal" value="${loan.interestRateKnown ? loan.annualRate : ""}" placeholder="غير واضح"><b>٪</b></div></label>
+        <label class="field ${loan.dueDay ? "" : "needs-review"}"><span>يوم الاستحقاق ${loan.dueDay ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — يرجى التأكيد</small>'}</span><input data-scan-field="day" type="text" inputmode="numeric" maxlength="2" value="${loan.dueDay ?? ""}" placeholder="غير واضح"></label>
       </div>
       <button class="remove-scan" type="button" data-remove-scan="${index}">حذف هذا القرض</button>
-    </article>`).join("");
+    </article>`;
+  }).join("");
   $("#save-scanned-loans").disabled = !scannedLoanCandidates.length;
 }
 
@@ -1880,7 +2318,12 @@ function addMissingScannedLoan() {
 
 async function scanLoanScreenshots(files) {
   if (loanScanInProgress) return;
-  const selected = [...files].filter((file) => file.type.startsWith("image/")).slice(0, 6);
+  const all = [...files];
+  const images = all.filter((file) => file.type.startsWith("image/"));
+  if (all.length && !images.length) { toast("اختر صوراً PNG أو JPG — الملف اللي اخترته مو صورة"); return; }
+  if (images.length < all.length) toast(`تجاهلت ${all.length - images.length} ملف مو صورة`);
+  if (images.length > 6) toast("أقرأ 6 صور في المرة — أخذت أول 6");
+  const selected = images.slice(0, 6);
   if (!selected.length) return;
   setLoanScanState("uploading");
   clearScannedImageURLs();
@@ -1937,6 +2380,15 @@ async function scanLoanScreenshots(files) {
       const result = await worker.recognize(preparedImage);
       scannedLoanCandidates.push(...parseLoanOCRLoans(result?.data?.text ?? "", scannedLoanCandidates.length));
     }
+    if (!scannedLoanCandidates.length) {
+      // قراءة فاضية ما تعني نجاحاً: نقول السبب بدل ما نفتح شاشة مراجعة خالية (F59)
+      await worker.terminate();
+      worker = null;
+      setLoanScanState("error");
+      setLoanAnalysisStatus({ title: "ما لقيت أرقام قرض في الصور", message: "تأكد أن الصورة تبيّن الرصيد المتبقي والقسط الشهري بدون قص، أو أدخل القرض يدوياً.", progress: 100, error: true });
+      toast("ما لقيت بيانات قرض بالصور — جرّب صورة أوضح أو الإدخال اليدوي");
+      return;
+    }
     await worker.terminate();
     worker = null;
     setLoanAnalysisStatus({ title: "خلص التحليل", message: "جهزنا القروض للمراجعة.", progress: 100 });
@@ -1976,17 +2428,18 @@ function saveScannedLoans(event) {
     const balanceFils = parseMoney($("[data-scan-field='balance']", card).value);
     const installmentFils = parseMoney($("[data-scan-field='installment']", card).value);
     const rateInput = $("[data-scan-field='rate']", card).value.trim();
-    const annualRate = rateInput === "" ? 0 : Number(rateInput);
-    const dueDay = Number($("[data-scan-field='day']", card).value);
+    const annualRate = rateInput === "" ? 0 : parseRate(rateInput, { min: 0, max: 100 });
+    const dueDay = parseCount($("[data-scan-field='day']", card).value, { min: 1, max: 31 });
     const startDate = $("[data-scan-field='start']", card).value;
     const endDate = $("[data-scan-field='end']", card).value;
-    if (!name || !balanceFils || !installmentFils || (originalAmountFils !== null && originalAmountFils < balanceFils) || !Number.isFinite(annualRate) || annualRate < 0 || annualRate > 100 || !Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31 || (startDate && !validDate(startDate)) || (endDate && !validDate(endDate))) return null;
+    // رصيد أكبر من أصل المبلغ طبيعي في المرابحة، فما نرفض الصف بسببه (F45)
+    if (!name || !balanceFils || !installmentFils || annualRate === null || dueDay === null || (startDate && !validDate(startDate)) || (endDate && !validDate(endDate))) return null;
     const original = originalAmountFils ?? balanceFils;
     return {
       id: createId(), name: name.slice(0, 60), lender: lender.slice(0, 60), type: debtTypes.includes(type) ? type : "أخرى",
       originalAmountFils: original, originalAmountKnown: originalAmountFils !== null, balanceFils, installmentFils,
       annualRate, interestRateKnown: rateInput !== "", dueDay, startDate, endDate,
-      remainingInstallments: null, totalPaidFils: Math.max(original - balanceFils, 0), status: "active"
+      remainingInstallments: null, totalPaidFils: Math.max(original - balanceFils, 0), status: balanceFils === 0 ? "completed" : "active"
     };
   });
   if (!records.length || records.some((record) => !record)) {
@@ -1995,8 +2448,12 @@ function saveScannedLoans(event) {
   }
   state.loans.push(...records);
   setLoanScanState("success");
-  saveState(); renderAll(); closeDialog($("#loan-review-dialog")); clearScannedImageURLs();
-  toast(`تمت إضافة ${records.length.toLocaleString("ar-KW-u-nu-latn")} قرض`);
+  discardingLoanScan = true;
+  closeDialog($("#loan-review-dialog"));
+  clearScannedImageURLs();
+  const murabaha = records.filter((record) => record.balanceFils > record.originalAmountFils).length;
+  commit(`تمت إضافة ${countLabel(records.length, "loan")}`);
+  if (murabaha) toast("في قرض رصيده أكبر من أصل المبلغ — طبيعي في المرابحة لأن المستحق يشمل الربح.");
 }
 
 function openGoal(goal = null) {
@@ -2027,6 +2484,16 @@ function submitGoal(event) {
   saveState(); renderAll(); closeDialog($("#goal-dialog")); toast(existing ? "تم تعديل الهدف" : "تمت إضافة الهدف");
 }
 
+/* الحجز الفعلي: إذا عند المستخدم بطاقة واحدة مسجلة فالمحرك يستخدم رقمها ويتجاهل رقم الإعدادات،
+   فنعرض ونكتب رقم البطاقة نفسه حتى يكون لتعديله أثر (F6). */
+function singleCreditCard() {
+  return state.creditCards.length === 1 ? state.creditCards[0] : null;
+}
+function effectiveCardReserveFils() {
+  if (!state.creditCards.length) return state.settings.creditCardReserveFils;
+  return state.creditCards.filter((card) => card.status !== "paused").reduce((sum, card) => sum + card.reservedPaymentFils, 0);
+}
+
 function openSettings() {
   $("#settings-error").textContent = "";
   $("#settings-income").value = moneyInput(state.settings.incomeFils);
@@ -2034,10 +2501,13 @@ function openSettings() {
   $("#settings-cash").value = moneyInput(state.settings.cashFils);
   $("#settings-salary-day").value = state.settings.salaryDay;
   $("#settings-safety-buffer").value = moneyInput(state.settings.safetyBufferFils);
-  $("#settings-credit-card-reserve").value = moneyInput(state.settings.creditCardReserveFils);
+  $("#settings-credit-card-reserve").value = moneyInput(effectiveCardReserveFils());
+  $("#settings-credit-card-reserve").disabled = state.creditCards.length > 1;
   $("#settings-invested").value = moneyInput(state.settings.investedFils);
   $("#settings-assets").value = moneyInput(state.settings.assetsFils);
   renderSecuritySettings();
+  renderBankFieldOrder();
+  updateMoneyPreviews($("#settings-form"));
   openDialog($("#settings-dialog"));
 }
 
@@ -2057,6 +2527,9 @@ function loadOcrEngine() {
 async function importBankFile(file) {
   if (!file) return;
   if (file.size > 5_000_000) { toast("الملف كبير؛ اختر ملف fils-bank.txt"); return; }
+  // ملف صورة أو PDF يرجع حروفاً غير مقروءة فتظهر رسائل وهمية (F51)
+  const textish = !file.type || file.type.startsWith("text/") || /\.(?:txt|log|csv)$/i.test(file.name ?? "");
+  if (!textish) { toast("الملف مو نصي؛ اختر fils-bank.txt من مجلد Shortcuts"); return; }
   const text = await file.text();
   const summary = ingestBankText(text, { fromFile: true });
   if (!summary.total && !summary.alreadyRead) { toast("الملف فاضي؛ تأكد من إعداد الاختصار"); return; }
@@ -2078,7 +2551,7 @@ function renderBankCard() {
   pill.textContent = `${pending.toLocaleString("ar-KW-u-nu-latn")} للمراجعة`;
   const review = $("#bank-card-review");
   review.hidden = pending === 0;
-  review.textContent = pending === 1 ? "راجع العملية الجديدة" : `راجع ${pending.toLocaleString("ar-KW-u-nu-latn")} عمليات جديدة`;
+  review.textContent = pending === 1 ? "راجع العملية الجديدة" : `راجع ${countLabel(pending, "transaction")} جديدة`;
 }
 
 const FIELD_LABELS = { title: "العنوان", subtitle: "العنوان الفرعي", body: "النص" };
@@ -2091,10 +2564,10 @@ function renderBankFieldOrder() {
   setText("#bank-field-summary", order.map((field) => FIELD_LABELS[field]).join(" ← "));
 }
 
-function saveBankFieldOrder() {
+function previewBankFieldOrder() {
   const picked = $$("[data-bank-field]").map((select) => select.value).filter(Boolean);
-  if (!picked.length || new Set(picked).size !== picked.length) { toast("اختر كل حقل مرة وحدة"); renderBankFieldOrder(); return; }
-  state.ui.bankFieldOrder = picked; saveState(); renderBankFieldOrder(); toast("تم حفظ ترتيب الحقول");
+  if (!picked.length || new Set(picked).size !== picked.length) { setText("#bank-field-summary", "اختر كل حقل مرة وحدة"); return; }
+  setText("#bank-field-summary", picked.map((field) => FIELD_LABELS[field]).join(" ← "));
 }
 
 function openBankAutomationGuide() {
@@ -2125,6 +2598,7 @@ function handlePortfolioLink() {
   return true;
 }
 
+let deferredBankText = "";
 function handleBankAutomationLink() {
   if (!location.hash.startsWith("#bank=")) return false;
   let bankText = "";
@@ -2136,35 +2610,69 @@ function handleBankAutomationLink() {
     toast("الإشعار وصل بدون نص");
     return true;
   }
+  if (lockedNow) {
+    // كان الإشعار يُحفظ ويُعرض خلف شاشة القفل، والعنوان يُمسح فيضيع النص (F46)
+    deferredBankText = bankText;
+    $("#lock-error").textContent = "وصل إشعار بنك — افتح القفل عشان أسجّله.";
+    return true;
+  }
   reportBankSummary(ingestBankText(bankText));
   return true;
 }
 
+function settingsError(message, selector) {
+  const box = $("#settings-error");
+  box.textContent = message;
+  // الخطأ كان ينزل أسفل نافذة طويلة فما يشوفه أحد (F33)
+  box.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (selector) invalidField(selector, "#settings-error", { preventScroll: true });
+}
+
 function submitSettings(event) {
   event.preventDefault();
-  const salaryDay = Number($("#settings-salary-day").value);
-  const fields = {
-    incomeFils: parseMoney($("#settings-income").value), budgetFils: parseMoney($("#settings-budget").value),
-    cashFils: parseMoney($("#settings-cash").value), salaryDay,
-    safetyBufferFils: parseMoney($("#settings-safety-buffer").value),
-    creditCardReserveFils: parseMoney($("#settings-credit-card-reserve").value),
-    investedFils: parseMoney($("#settings-invested").value),
-    assetsFils: parseMoney($("#settings-assets").value)
+  const salaryDay = parseCount($("#settings-salary-day").value, { min: 1, max: 31 });
+  const amounts = {
+    incomeFils: ["#settings-income", "الدخل الشهري"], budgetFils: ["#settings-budget", "ميزانية المصروف"],
+    cashFils: ["#settings-cash", "رصيد الكاش"], safetyBufferFils: ["#settings-safety-buffer", "احتياطي الأمان"],
+    creditCardReserveFils: ["#settings-credit-card-reserve", "دفعات البطاقات"],
+    investedFils: ["#settings-invested", "قيمة الاستثمارات"], assetsFils: ["#settings-assets", "قيمة الأصول"]
   };
-  if (Object.entries(fields).some(([key, value]) => key !== "salaryDay" && value === null) ||
-      !Number.isInteger(salaryDay) || salaryDay < 1 || salaryDay > 31) {
-    $("#settings-error").textContent = "راجع المبالغ ويوم نزول المعاش من ١ إلى ٣١."; return;
+  const fields = { salaryDay };
+  const optional = new Set(["cashFils", "safetyBufferFils", "creditCardReserveFils", "investedFils", "assetsFils"]);
+  for (const [key, [selector, label]] of Object.entries(amounts)) {
+    // الخانة الاختيارية الفاضية = صفر (F33)
+    const raw = $(selector).value.trim();
+    const value = optional.has(key) && raw === "" ? 0 : parseMoney(raw);
+    if (value === null) { settingsError(`${label}: اكتب المبلغ بالدينار مثل 1500.000 (ثلاث خانات كحد أقصى).`, selector); return; }
+    fields[key] = value;
   }
-  const additionalIncomes = state.incomes.filter((item) => !["legacy-primary-income", "primary-income"].includes(item.id));
-  const additionalTotal = additionalIncomes.filter((item) => item.status !== "paused").reduce((sum, item) => sum + item.amountFils, 0);
-  if (fields.incomeFils < additionalTotal) {
-    $("#settings-error").textContent = "الدخل الكلي لا يمكن أن يكون أقل من مصادر الدخل الإضافية المسجلة.";
-    return;
+  if (salaryDay === null) { settingsError("يوم نزول المعاش من 1 إلى 31.", "#settings-salary-day"); return; }
+
+  // F13: دخل واحد مسجل؟ نعدّله مباشرة. أكثر من واحد؟ الأول هو الأساسي ويستوعب الفرق.
+  if (state.incomes.length <= 1) {
+    if (fields.incomeFils === 0) state.incomes = [];
+    else if (state.incomes.length === 1) state.incomes[0].amountFils = fields.incomeFils;
+    else state.incomes = [{ id: "primary-income", name: "الدخل الأساسي", amountFils: fields.incomeFils, frequency: "monthly", status: "active" }];
+  } else {
+    const others = state.incomes.slice(1);
+    const othersTotal = others.filter((item) => item.status !== "paused").reduce((sum, item) => sum + item.amountFils, 0);
+    if (fields.incomeFils < othersTotal) {
+      settingsError(`الدخل الكلي لا يقل عن مصادر الدخل الإضافية المسجلة (${formatMoney(othersTotal)}).`, "#settings-income");
+      return;
+    }
+    const primaryAmount = fields.incomeFils - othersTotal;
+    if (primaryAmount > 0) state.incomes[0].amountFils = primaryAmount;
+    else state.incomes = others;
   }
-  const primaryAmount = fields.incomeFils - additionalTotal;
-  state.incomes = additionalIncomes;
-  if (primaryAmount > 0) state.incomes.unshift({ id: "primary-income", name: "الدخل الأساسي", amountFils: primaryAmount, frequency: "monthly", status: "active" });
-  state.settings = fields; saveState(); renderAll(); closeDialog($("#settings-dialog")); toast("تم حفظ الإعدادات");
+
+  const card = singleCreditCard();
+  if (card) card.reservedPaymentFils = fields.creditCardReserveFils;
+  state.settings = fields;
+  // F54: ترتيب حقول الإشعار يُثبّت مع زر الحفظ لا بمجرد تغيير القائمة
+  const picked = $$("[data-bank-field]").map((select) => select.value).filter(Boolean);
+  if (picked.length && new Set(picked).size === picked.length) state.ui.bankFieldOrder = picked;
+  closeDialog($("#settings-dialog"));
+  commit("تم حفظ الإعدادات");
 }
 
 function switchView(target, updateHash = true) {
@@ -2185,14 +2693,29 @@ function switchView(target, updateHash = true) {
 }
 
 async function removeRecord(collection, id, label) {
-  if (!(await askConfirm(`متأكد تبي تحذف ${label}؟`, { okLabel: "احذف", danger: true }))) return;
+  const record = state[collection].find((item) => item.id === id);
+  if (!record) return;
+  const name = record.merchant || record.name || "";
+  // المبلغ مع الاسم حتى يميّز المستخدم بين سجلين بنفس الاسم (F58)
+  const amount = Number.isSafeInteger(record.amountFils) ? record.amountFils : Number.isSafeInteger(record.balanceFils) ? record.balanceFils : Number.isSafeInteger(record.targetFils) ? record.targetFils : null;
+  if (!(await askConfirm(`متأكد تبي تحذف ${label}${name ? ` «${cutText(name, 40)}»` : ""}${amount !== null ? ` (${formatMoney(amount)})` : ""}؟`, { okLabel: "احذف", danger: true }))) return;
+  const index = state[collection].findIndex((item) => item.id === id);
+  const removedDebtPayments = collection === "loans" ? state.debtPayments.filter((item) => item.debtId === id) : [];
+  const removedExtraPayments = collection === "loans" ? state.extraPayments.filter((item) => item.debtId === id) : [];
+  const removedCommitmentPayments = collection === "monthlyCommitments" ? state.commitmentPayments.filter((item) => item.commitmentId === id) : [];
   state[collection] = state[collection].filter((item) => item.id !== id);
   if (collection === "loans") {
     state.debtPayments = state.debtPayments.filter((item) => item.debtId !== id);
     state.extraPayments = state.extraPayments.filter((item) => item.debtId !== id);
   }
   if (collection === "monthlyCommitments") state.commitmentPayments = state.commitmentPayments.filter((item) => item.commitmentId !== id);
-  saveState(); renderAll(); toast("تم الحذف");
+  commit("تم الحذف", { undo: () => {
+    state[collection].splice(Math.max(index, 0), 0, record);
+    state.debtPayments.push(...removedDebtPayments);
+    state.extraPayments.push(...removedExtraPayments);
+    state.commitmentPayments.push(...removedCommitmentPayments);
+    commit("رجّعت السجل");
+  } });
 }
 
 function askAccountant(question) {
@@ -2205,7 +2728,7 @@ function askAccountant(question) {
       return;
     }
     const details = report.insights.length ? report.insights : ["ما ظهر نمط متكرر كافٍ حتى الآن."];
-    details.push(`التحليل مبني على ${report.count.toLocaleString("ar-KW-u-nu-latn")} عملية مصروف معتمدة خلال الفترة المعروضة.`);
+    details.push(`التحليل مبني على ${countLabel(report.count, "transaction")} مصروف معتمدة خلال الفترة المعروضة.`);
     $("#accountant-answer").innerHTML = `<span class="answer-kind">من معاملاتك الفعلية</span><h3>ملخص آخر 12 شهر</h3><p>إجمالي المصروفات ${escapeHTML(formatMoney(report.totalFils))}، ومتوسط الأشهر المسجلة ${escapeHTML(formatMoney(report.monthlyAverageFils))}.</p><ul>${details.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>`;
     return;
   }
@@ -2228,22 +2751,34 @@ function captureFinancialSnapshot() {
 }
 
 let confirmResolver = null;
-function askConfirm(message, { okLabel = "نعم، كمّل", danger = false } = {}) {
+let confirmPhrase = "";
+function askConfirm(message, { okLabel = "نعم، كمّل", danger = false, phrase = "" } = {}) {
   const dialog = $("#confirm-dialog");
-  if (confirmResolver) confirmResolver(false);
+  if (confirmResolver) settleConfirm(false);
   $("#confirm-message").textContent = message;
+  confirmPhrase = phrase;
+  const field = $("#confirm-phrase-field");
+  const input = $("#confirm-phrase");
+  field.hidden = !phrase;
+  input.value = "";
+  if (phrase) setText("#confirm-phrase-label", `اكتب «${phrase}» للتأكيد`);
   const ok = $("#confirm-ok");
   ok.textContent = okLabel;
   ok.classList.toggle("danger", danger);
   ok.classList.toggle("primary", !danger);
+  ok.disabled = Boolean(phrase);
   return new Promise((resolve) => {
     confirmResolver = resolve;
     openDialog(dialog);
+    if (phrase) setTimeout(() => input.focus(), 60);
   });
 }
 function settleConfirm(value) {
   const resolve = confirmResolver;
   confirmResolver = null;
+  confirmPhrase = "";
+  $("#confirm-phrase-field").hidden = true;
+  $("#confirm-ok").disabled = false;
   if ($("#confirm-dialog").open) closeDialog($("#confirm-dialog"));
   resolve?.(value);
 }
@@ -2262,11 +2797,13 @@ function writeLockRecord(record) {
   lockRecord = record;
   try {
     if (record) localStorage.setItem(LOCK_KEY, JSON.stringify(record)); else localStorage.removeItem(LOCK_KEY);
-  } catch (error) { console.warn("Lock storage unavailable", error); }
+    return true;
+  } catch (error) { console.warn("Lock storage unavailable", error); return false; }
 }
 
 function snapshotBeforeChange(reason) {
-  try { localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ savedAt: new Date().toISOString(), reason, state })); } catch (error) { console.warn("Snapshot failed", error); }
+  try { localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ savedAt: new Date().toISOString(), reason, state })); return true; }
+  catch (error) { console.warn("Snapshot failed", error); return false; }
 }
 function readSnapshot() {
   try {
@@ -2274,13 +2811,18 @@ function readSnapshot() {
     return parsed?.state && typeof parsed.savedAt === "string" ? parsed : null;
   } catch { return null; }
 }
+const SNAPSHOT_LABELS = { reset: "المسح", import: "الاستيراد", restore: "الاسترجاع", pin: "تغيير الرمز" };
 async function restoreSnapshot() {
   const snapshot = readSnapshot();
   if (!snapshot) { toast("ما فيه نسخة تلقائية للاسترجاع"); return; }
-  if (!(await askConfirm(`نرجّع بياناتك كما كانت قبل ${snapshot.reason === "reset" ? "المسح" : "الاستيراد"} (${formatDate(snapshot.savedAt.slice(0, 10))})؟ بيانات اليوم الحالية تُستبدل.`, { okLabel: "استرجاع", danger: true }))) return;
-  snapshotBeforeChange("restore");
+  const label = SNAPSHOT_LABELS[snapshot.reason] ?? "الاستيراد";
+  if (!(await askConfirm(`نرجّع بياناتك كما كانت قبل ${label} (${formatDate(snapshot.savedAt.slice(0, 10))})؟ بيانات اليوم الحالية تُستبدل.`, { okLabel: "استرجاع", danger: true }))) return;
+  if (!snapshotBeforeChange("restore")) {
+    if (!(await askConfirm("ما قدرت أحفظ نسخة رجوع قبل الاسترجاع. صدّر نسخة احتياطية أولاً، أو نكمل بدون شبكة أمان؟", { okLabel: "كمّل بدون نسخة", danger: true }))) return;
+  }
   state = sanitizeState(snapshot.state);
-  saveState(); renderAll({ investmentInputs: true }); closeDialog($("#settings-dialog")); toast("تم الاسترجاع");
+  closeDialog($("#settings-dialog"));
+  commit("تم الاسترجاع", { investmentInputs: true });
 }
 
 function renderBackupReminder() {
@@ -2302,7 +2844,7 @@ function renderSecuritySettings() {
   $("#lock-now").hidden = !enabled;
   const snapshot = readSnapshot();
   $("#restore-snapshot").hidden = !snapshot;
-  if (snapshot) $("#restore-snapshot").textContent = `استرجاع نسخة ما قبل ${snapshot.reason === "reset" ? "المسح" : snapshot.reason === "restore" ? "الاسترجاع" : "الاستيراد"}`;
+  if (snapshot) $("#restore-snapshot").textContent = `استرجاع نسخة ما قبل ${SNAPSHOT_LABELS[snapshot.reason] ?? "الاستيراد"}`;
 }
 
 /* ----- شاشة القفل ----- */
@@ -2319,11 +2861,17 @@ function lockApp() {
 }
 function unlockApp() {
   lockedNow = false;
-  document.body.classList.remove("is-locked");
+  document.body.classList.remove("is-locked", "is-private");
   $("#lock-screen").hidden = true;
   $("#lock-pin").value = "";
   clearInterval(lockTimer);
   renderBackupReminder();
+  renderNudges();
+  if (deferredBankText) {
+    const text = deferredBankText;
+    deferredBankText = "";
+    reportBankSummary(ingestBankText(text));
+  }
 }
 function updateLockCountdown() {
   clearInterval(lockTimer);
@@ -2347,7 +2895,8 @@ async function submitLock(event) {
   updateLockCountdown();
 }
 async function forgotPin() {
-  if (!(await askConfirm("ما فيه طريقة لاسترجاع الرمز. نمسح كل بيانات فلس من هذا الجهاز ونفتح التطبيق بدون قفل. تقدر تستورد نسخة احتياطية بعدها. نكمل؟", { okLabel: "امسح وافتح", danger: true }))) return;
+  // F38: ضغطتين كانت تكفي لمسح كل شي؛ الحين لازم تنكتب «امسح» والتنبيه واضح لمن ما عنده ملف نسخة
+  if (!(await askConfirm("ما فيه طريقة لاسترجاع الرمز. نمسح كل بيانات فلس من هذا الجهاز (مع نسخة الرجوع التلقائية) ونفتح التطبيق بدون قفل. إذا ما عندك ملف نسخة احتياطية مصدّر، بياناتك تروح نهائياً. نكمل؟", { okLabel: "امسح وافتح", danger: true, phrase: "امسح" }))) return;
   writeLockRecord(null);
   // The automatic snapshot would otherwise restore everything without the PIN.
   try { localStorage.removeItem(SNAPSHOT_KEY); } catch { /* storage unavailable */ }
@@ -2355,6 +2904,8 @@ async function forgotPin() {
   state.ui.initialPortfolioApplied = true;
   try { localStorage.removeItem(STORAGE_KEY); storageAvailable = true; } catch { storageAvailable = false; }
   saveState(); unlockApp(); renderAll({ investmentInputs: true }); toast("تم المسح. تقدر تستورد نسخة احتياطية من الإعدادات.");
+  // الترحيب يفتح مباشرة بدل ما ينتظر إعادة التحميل (F38)
+  setTimeout(openOnboarding, 350);
 }
 
 /* ----- ضبط الرمز ----- */
@@ -2372,20 +2923,44 @@ function openPinDialog(mode) {
 async function submitPin(event) {
   event.preventDefault();
   const error = $("#pin-error");
-  if (pinMode !== "set" && !(await verifyPin($("#pin-current").value.trim(), lockRecord))) { error.textContent = "الرمز الحالي غير صحيح."; return; }
+  if (pinMode !== "set") {
+    // إيقاف القفل وتغييره كانا بلا حد للمحاولات، فيمكن تخمين الرمز بلا عقوبة (F47)
+    const waiting = remainingLockMs(lockRecord, Date.now());
+    if (waiting > 0) { error.textContent = `محاولات كثيرة. جرّب بعد ${Math.ceil(waiting / 1000).toLocaleString("ar-KW-u-nu-latn")} ثانية.`; return; }
+    if (!(await verifyPin($("#pin-current").value.trim(), lockRecord))) {
+      writeLockRecord(registerFailure(lockRecord, Date.now()));
+      $("#pin-current").value = "";
+      const left = remainingLockMs(lockRecord, Date.now());
+      error.textContent = left > 0
+        ? `الرمز الحالي غير صحيح. محاولات كثيرة — جرّب بعد ${Math.ceil(left / 1000).toLocaleString("ar-KW-u-nu-latn")} ثانية.`
+        : "الرمز الحالي غير صحيح.";
+      return;
+    }
+    writeLockRecord(registerSuccess(lockRecord));
+  }
   if (pinMode === "disable") { writeLockRecord(null); closeDialog($("#pin-dialog")); renderSecuritySettings(); toast("تم إيقاف القفل"); return; }
   const next = $("#pin-new").value.trim();
-  if (!PIN_PATTERN.test(next)) { error.textContent = "الرمز من ٤ إلى ٨ أرقام فقط."; return; }
-  if (next !== $("#pin-confirm").value.trim()) { error.textContent = "الرمزان غير متطابقين."; return; }
+  if (!PIN_PATTERN.test(normalizeDigits(next))) { error.textContent = "الرمز من 4 إلى 8 أرقام فقط."; return; }
+  if (normalizeDigits(next) !== normalizeDigits($("#pin-confirm").value.trim())) { error.textContent = "الرمزان غير متطابقين."; return; }
   if (!cryptoAvailable()) { error.textContent = "المتصفح لا يدعم القفل هنا."; return; }
-  writeLockRecord(await createLockRecord(next));
-  closeDialog($("#pin-dialog")); renderSecuritySettings(); toast("تم تفعيل القفل");
+  const changing = Boolean(lockRecord);
+  const previousRecord = lockRecord;
+  // التخزين المحظور: «تم تفعيل القفل» كانت تطلع والرمز ما ينحفظ، فيفتح التطبيق بدون قفل بعد إعادة التحميل (F11)
+  if (!writeLockRecord(await createLockRecord(next))) {
+    lockRecord = previousRecord;
+    error.textContent = "ما قدرت أحفظ الرمز على هذا الجهاز (التخزين محظور أو ممتلئ)، فالقفل ما راح يشتغل. افتح فلس في Safari العادي وجرّب مرة ثانية.";
+    return;
+  }
+  closeDialog($("#pin-dialog")); renderSecuritySettings();
+  toast(changing ? "تم تغيير الرمز" : "تم تفعيل القفل");
 }
 
 function setupSafetyEvents() {
   $("#confirm-ok").addEventListener("click", () => settleConfirm(true));
   $("#confirm-cancel").addEventListener("click", () => settleConfirm(false));
-  $("#confirm-dialog").addEventListener("close", () => settleConfirm(false));
+  // حدث close يوصل متأخر (task): لو انفتح تأكيد ثاني بعده مباشرة (مثل «ما قدرت أحفظ نسخة رجوع»)
+  // كان يلغيه بصمت فما يشوف المستخدم أي رسالة. نتجاهله إذا النافذة مفتوحة من جديد.
+  $("#confirm-dialog").addEventListener("close", () => { if (!$("#confirm-dialog").open) settleConfirm(false); });
   $("#lock-form").addEventListener("submit", submitLock);
   $("#lock-forgot").addEventListener("click", forgotPin);
   $("#pin-form").addEventListener("submit", submitPin);
@@ -2396,12 +2971,18 @@ function setupSafetyEvents() {
   $("#backup-export").addEventListener("click", exportData);
   $("#backup-snooze").addEventListener("click", () => {
     state.ui.backupSnoozedUntil = new Date(Date.now() + 3 * 86_400_000).toISOString();
-    saveState(); renderBackupReminder(); toast("بذكّرك بعد ٣ أيام");
+    saveState(); renderBackupReminder(); toast("بذكّرك بعد 3 أيام");
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") hiddenAtMs = Date.now();
-    else if (lockRecord && shouldRelock({ hiddenAtMs, nowMs: Date.now() })) lockApp();
-    if (document.visibilityState === "visible") renderBackupReminder();
+    if (document.visibilityState === "hidden") {
+      hiddenAtMs = Date.now();
+      // صورة مبدّل التطبيقات تُلتقط بعد الخروج: نضبّب الأرقام إذا كان القفل مفعّلاً (F48)
+      if (lockRecord) document.body.classList.add("is-private");
+      return;
+    }
+    document.body.classList.remove("is-private");
+    if (lockRecord && shouldRelock({ hiddenAtMs, nowMs: Date.now() })) lockApp();
+    renderBackupReminder();
   });
 }
 
@@ -2417,25 +2998,79 @@ function exportData() {
   toast("تم تجهيز النسخة الاحتياطية");
 }
 
+/* F39: ملخص الملف قبل الاستبدال (كم عملية وقرض والتزام…) مع المرفوض وسببه، وتحذير لو الملف فاضي. */
+function backupSummaryLines(snapshot, stats = null) {
+  const lines = [
+    `العمليات: ${(snapshot.transactions?.length ?? 0).toLocaleString("ar-KW-u-nu-latn")}`,
+    `القروض: ${(snapshot.loans?.length ?? 0).toLocaleString("ar-KW-u-nu-latn")} · الالتزامات: ${(snapshot.monthlyCommitments?.length ?? 0).toLocaleString("ar-KW-u-nu-latn")}`,
+    `الأهداف: ${(snapshot.goals?.length ?? 0).toLocaleString("ar-KW-u-nu-latn")} · الأسهم: ${(snapshot.stockHoldings?.length ?? 0).toLocaleString("ar-KW-u-nu-latn")}`
+  ];
+  if (stats?.cappedTransactions) lines.push(`⚠ الملف فيه ${countLabel(stats.rawTransactions, "transaction")} والحد ${(20_000).toLocaleString("ar-KW-u-nu-latn")}، فما راح ينقرا ${countLabel(stats.cappedTransactions, "transaction")}.`);
+  if (stats?.invalidTransactions) lines.push(`⚠ ${countLabel(stats.invalidTransactions, "transaction")} مرفوضة (تاريخ غير صالح أو مبلغ غير صحيح).`);
+  return lines;
+}
+
 async function importData(file) {
   if (!file) return;
   try {
     const raw = JSON.parse(await file.text());
+    if (Number.isInteger(raw?.version) && raw.version > 4) {
+      settingsError(`النسخة من إصدار أحدث من فلس (${raw.version}). حدّث التطبيق (أعد فتحه وهو متصل) وبعدها استوردها.`);
+      return;
+    }
     if (![1, 2, 3, 4].includes(raw?.version)) throw new Error("Unsupported backup");
-    if (!(await askConfirm("استيراد النسخة يستبدل البيانات الحالية. نحفظ لك نسخة تلقائية قبل الاستبدال لو احتجت ترجع. نكمل؟", { okLabel: "استيراد" }))) return;
-    snapshotBeforeChange("import");
-    state = sanitizeState(raw); saveState(); renderAll({ investmentInputs: true }); closeDialog($("#settings-dialog")); toast("تم استيراد البيانات");
-  } catch (error) { $("#settings-error").textContent = "ملف النسخة غير صالح أو غير مدعوم."; console.error(error); }
+    const next = sanitizeState(raw);
+    const stats = { ...lastSanitizeStats };
+    const empty = !hasMeaningfulData(next);
+    const exported = typeof raw.exportedAt === "string" && validDate(raw.exportedAt.slice(0, 10)) ? ` (${formatDate(raw.exportedAt.slice(0, 10))})` : "";
+    const message = [
+      `الملف${exported}:`, ...backupSummaryLines(next, stats),
+      "", "بياناتك الحالية:", ...backupSummaryLines(state),
+      "", empty
+        ? "⚠ الملف ما فيه بيانات، فالاستيراد يمسح بياناتك الحالية."
+        : "الاستيراد يستبدل البيانات الحالية، ونحفظ لك نسخة تلقائية قبل الاستبدال لو احتجت ترجع. نكمل؟"
+    ].join("\n");
+    if (!(await askConfirm(message, { okLabel: empty ? "استبدل بملف فاضي" : "استيراد", danger: empty }))) return;
+    // ما نستبدل بيانات المستخدم بدون شبكة أمان إلا بعلمه (F12)
+    if (!snapshotBeforeChange("import")) {
+      settingsError("ما قدرت أحفظ نسخة رجوع على الجهاز (المساحة ممتلئة؟). صدّر نسخة احتياطية أولاً، وبعدها أعد الاستيراد.");
+      return;
+    }
+    const previous = state;
+    state = next;
+    // F12: يا ينحفظ كامل يا نرجع للحالة السابقة — ما نقول «تم» وهو بالذاكرة بس
+    if (!saveState()) {
+      state = previous;
+      saveState();
+      renderAll({ investmentInputs: true });
+      settingsError(`ما قدرت أحفظ النسخة المستوردة (${countLabel(next.transactions.length, "transaction")}) — مساحة المتصفح ما تكفي. رجّعت بياناتك السابقة كما هي.`);
+      return;
+    }
+    closeDialog($("#settings-dialog"));
+    const dropped = stats.cappedTransactions + stats.invalidTransactions;
+    commit(dropped
+      ? `قرأت ${countLabel(stats.rawTransactions, "transaction")} واعتمدت ${countLabel(stats.keptTransactions, "transaction")} — ${[stats.invalidTransactions ? `${countLabel(stats.invalidTransactions, "transaction")} مرفوضة` : "", stats.cappedTransactions ? `${countLabel(stats.cappedTransactions, "transaction")} فوق الحد` : ""].filter(Boolean).join(" و")}`
+      : `تم استيراد البيانات · ${countLabel(stats.keptTransactions, "transaction")}`, { investmentInputs: true });
+  } catch (error) { settingsError("ملف النسخة غير صالح أو غير مدعوم."); console.error(error); }
   finally { $("#import-data").value = ""; }
 }
 
-async function resetData() {
-  if (!(await askConfirm("هذا يمسح كل العمليات والالتزامات والقروض والأسهم والأهداف من هذا الجهاز. نحفظ لك نسخة تلقائية وحدة تقدر ترجع لها بعد المسح. متأكد؟", { okLabel: "امسح", danger: true }))) return;
-  snapshotBeforeChange("reset");
+async function resetData({ permanent = false } = {}) {
+  const message = permanent
+    ? "مسح نهائي: نمسح كل بياناتك ونمسح معها النسخة التلقائية، فما يبقى شي تقدر ترجع له من الجهاز."
+    : "هذا يمسح كل العمليات والالتزامات والقروض والأسهم والأهداف من هذا الجهاز. نحفظ لك نسخة تلقائية وحدة تقدر ترجع لها بعد المسح. متأكد؟";
+  // F38: كتابة الكلمة تمنع المسح بضغطة غلط
+  if (!(await askConfirm(message, { okLabel: permanent ? "امسح نهائياً" : "امسح", danger: true, phrase: "امسح" }))) return;
+  if (!permanent && !snapshotBeforeChange("reset")) {
+    if (!(await askConfirm("ما قدرت أحفظ نسخة رجوع. صدّر نسخة احتياطية أولاً، أو نمسح بدون شبكة أمان؟", { okLabel: "امسح بدون نسخة", danger: true }))) return;
+  }
+  if (permanent) { try { localStorage.removeItem(SNAPSHOT_KEY); } catch { /* storage unavailable */ } }
   state = defaultState();
   state.ui.initialPortfolioApplied = true;
-  try { localStorage.removeItem(STORAGE_KEY); storageAvailable = true; } catch { storageAvailable = false; }
-  saveState(); renderAll({ investmentInputs: true }); closeDialog($("#settings-dialog")); toast("تم مسح البيانات");
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage unavailable */ }
+  closeDialog($("#settings-dialog"));
+  commit(permanent ? "تم المسح النهائي" : "تم مسح البيانات", { investmentInputs: true });
+  setTimeout(openOnboarding, 350);
 }
 
 function bindEvents() {
@@ -2453,7 +3088,7 @@ function bindEvents() {
     state.stockHoldings.push(...additions.map(item => ({ ...item, id: createId(), createdAt: now })));
     saveState(); renderAll(); closeDialog($("#portfolio-import-dialog"));
     pendingPortfolioImport = [];
-    toast(`تمت إضافة ${additions.length.toLocaleString("ar-KW-u-nu-latn")} أسهم إلى محفظتك`);
+    toast(`تمت إضافة ${countLabel(additions.length, "stock")} إلى محفظتك`);
   });
   $$("[data-target]").forEach((button) => button.addEventListener("click", () => {
     if ($("#more-dialog").open) closeDialog($("#more-dialog"));
@@ -2496,9 +3131,37 @@ function bindEvents() {
   });
   $$(".close-dialog").forEach((button) => button.addEventListener("click", () => closeDialog(button.closest("dialog"))));
   $$("dialog").forEach((dialog) => dialog.addEventListener("click", (event) => {
+    if (dialog.id === "loan-review-dialog") return;
     const box = dialog.getBoundingClientRect();
     if (event.target === dialog && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom)) closeDialog(dialog);
   }));
+  // F7: معاينة المبلغ تحت أي خانة دينار، في كل النوافذ
+  document.addEventListener("input", (event) => {
+    if (event.target.matches?.(".money-field input")) updateMoneyPreview(event.target);
+    if (event.target.getAttribute?.("aria-invalid") === "true") event.target.removeAttribute("aria-invalid");
+  });
+  // F38: زر التأكيد يفتح فقط لما تُكتب الكلمة المطلوبة
+  $("#confirm-phrase").addEventListener("input", () => {
+    if (!confirmPhrase) return;
+    $("#confirm-ok").disabled = $("#confirm-phrase").value.trim() !== confirmPhrase;
+  });
+  // F52: التصنيف يُقترح من اسم التاجر، وقائمة الدخل غير قائمة المصروف
+  $("#transaction-category").addEventListener("change", () => { categoryTouched = true; });
+  $("#transaction-kind").addEventListener("change", () => {
+    renderTransactionCategories($("#transaction-kind").value, $("#transaction-category").value);
+    categoryTouched = false;
+  });
+  $("#transaction-merchant").addEventListener("input", () => {
+    if (categoryTouched || $("#transaction-kind").value === "income") return;
+    const merchant = $("#transaction-merchant").value.trim();
+    if (merchant.length < 3) return;
+    const guess = inferCategory(merchant);
+    if (guess && guess !== "أخرى") $("#transaction-category").value = guess;
+  });
+  $("#bank-date").addEventListener("change", renderBankPreview);
+  $("#reset-data-hard").addEventListener("click", () => resetData({ permanent: true }));
+  $("#storage-warning-export").addEventListener("click", exportData);
+  $("#storage-warning-retry").addEventListener("click", () => { if (saveState()) toast("تم الحفظ على الجهاز ✅"); else toast("ما زال الحفظ متعذراً — صدّر نسخة احتياطية"); });
   $("#transaction-form").addEventListener("submit", submitTransaction);
   $("#commitment-form").addEventListener("submit", submitCommitment);
   $("#commitment-category").addEventListener("change", () => { $("#custom-category-field").hidden = $("#commitment-category").value !== "__custom"; });
@@ -2508,12 +3171,39 @@ function bindEvents() {
   $("#loan-review-form").addEventListener("submit", saveScannedLoans);
   $("#add-missing-scanned-loan").addEventListener("click", addMissingScannedLoan);
   $("#loan-screenshots").addEventListener("change", (event) => scanLoanScreenshots(event.target.files ?? []));
+  // Escape أو ضغطة خارج النافذة كانت تلغي كل التعديلات بلا سؤال (F21)
+  $("#loan-review-dialog").addEventListener("cancel", (event) => {
+    if (discardingLoanScan) return;
+    event.preventDefault();
+    toast("اضغط «إلغاء» إذا تبي تتخلى عن المراجعة");
+  });
   $("#loan-review-dialog").addEventListener("close", () => {
+    if (!discardingLoanScan) return;
+    discardingLoanScan = false;
     scannedLoanCandidates = [];
     $("#loan-scan-results").innerHTML = "";
     $("#loan-scan-error").textContent = "";
     $("#save-scanned-loans").disabled = true;
     clearScannedImageURLs();
+  });
+  $$(".discard-loan-scan").forEach((button) => button.addEventListener("click", () => { discardingLoanScan = true; }));
+  // F21: كل حرف يكتبه المستخدم يرجع للمرشّح نفسه، فإعادة الرسم ما تمسحه
+  $("#loan-scan-results").addEventListener("input", (event) => {
+    const card = event.target.closest("[data-scan-index]");
+    const field = event.target.dataset.scanField;
+    const candidate = scannedLoanCandidates[Number(card?.dataset.scanIndex)];
+    if (!candidate || !field) return;
+    const value = event.target.value;
+    if (field === "name") candidate.name = value.trim();
+    else if (field === "lender") candidate.lender = value.trim();
+    else if (field === "type") candidate.type = value;
+    else if (field === "original") candidate.originalAmountFils = parseMoney(value);
+    else if (field === "balance") candidate.balanceFils = parseMoney(value);
+    else if (field === "installment") candidate.installmentFils = parseMoney(value);
+    else if (field === "start") candidate.startDate = value;
+    else if (field === "end") candidate.endDate = value;
+    else if (field === "rate") { const rate = parseRate(value, { min: 0, max: 100 }); candidate.annualRate = rate ?? 0; candidate.interestRateKnown = value.trim() !== "" && rate !== null; }
+    else if (field === "day") candidate.dueDay = parseCount(value, { min: 1, max: 31 });
   });
   $("#loan-scan-results").addEventListener("click", (event) => {
     const index = Number(event.target.dataset.removeScan);
@@ -2540,8 +3230,12 @@ function bindEvents() {
   });
   $("#settings-form").addEventListener("submit", submitSettings);
   $("#settings-button").addEventListener("click", openSettings);
-  $$("[data-bank-field]").forEach((select) => select.addEventListener("change", saveBankFieldOrder));
-  $("#bank-field-reset").addEventListener("click", () => { state.ui.bankFieldOrder = [...DEFAULT_FIELD_ORDER]; saveState(); renderBankFieldOrder(); toast("رجع الترتيب الافتراضي"); });
+  $$("[data-bank-field]").forEach((select) => select.addEventListener("change", previewBankFieldOrder));
+  $("#bank-field-reset").addEventListener("click", () => {
+    $$("[data-bank-field]").forEach((select, index) => { select.value = DEFAULT_FIELD_ORDER[index] ?? ""; });
+    previewBankFieldOrder();
+    toast("رجع الترتيب الافتراضي — اضغط حفظ لتثبيته");
+  });
   $("#bank-file").addEventListener("change", async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -2549,12 +3243,12 @@ function bindEvents() {
   });
   $("#bank-paste-clipboard").addEventListener("click", async () => {
     const text = await pasteBankFromClipboard();
-    if (!text) { $("#bank-error").textContent = "اضغط مطولاً داخل المربع واختر «لصق»."; $("#bank-text").focus(); return; }
+    if (!text) { $("#bank-error").textContent = "اضغط مطولاً داخل المربع واختر «لصق»."; invalidField("#bank-text", "#bank-error"); return; }
     $("#bank-text").value = text; $("#bank-error").textContent = ""; renderBankPreview();
   });
   $("#bank-form").addEventListener("submit", (event) => {
     event.preventDefault();
-    const summary = ingestBankText($("#bank-text").value);
+    const summary = ingestBankText($("#bank-text").value, { dateOverrideISO: $("#bank-date").value });
     if (!summary.total) { $("#bank-error").textContent = "الصق نص إشعار واحد على الأقل."; return; }
     if (!summary.queued && !summary.duplicates && !summary.ignored.length) { $("#bank-error").textContent = manualBankMessage(summary.manual[0]); return; }
     closeDialog($("#bank-dialog"));
@@ -2573,13 +3267,35 @@ function bindEvents() {
   $("#commitment-category-filter").addEventListener("change", renderCommitments);
   $("#commitment-status-filter").addEventListener("change", renderCommitments);
   $("#pending-inbox-list").addEventListener("click", async (event) => {
+    event.stopPropagation();
     const approveId = event.target.dataset.approvePending;
     const reviewId = event.target.dataset.reviewPending;
     if (event.target.dataset.approveAll) {
       const ready = state.transactions.filter((item) => !item.reviewed && !item.possibleDuplicate);
       if (!ready.length) { toast("كلها تحتاج مراجعتك — فيها عمليات قد تكون مكررة"); return; }
+      const totalFils = ready.reduce((sum, item) => sum + (item.kind === "income" ? 0 : item.amountFils), 0);
+      // «اعتماد الكل» يدخل مبالغ في كل الحسابات، فنقول العدد والمجموع أولاً (F31)
+      if (!(await askConfirm(`نعتمد ${countLabel(ready.length, "transaction")} بمصروف ${formatMoney(totalFils)}؟ تدخل كلها في الميزانية والمتاح للصرف.`, { okLabel: "اعتمد الكل" }))) return;
+      const ids = ready.map((item) => item.id);
       ready.forEach((item) => { item.reviewed = true; learnMerchant(item); });
-      saveState(); renderAll(); toast(`تم اعتماد ${ready.length.toLocaleString("ar-KW-u-nu-latn")} عمليات`);
+      commit(`تم اعتماد ${countLabel(ids.length, "transaction")} · ${formatMoney(totalFils)}`, { undo: () => {
+        ids.forEach((id) => { const item = state.transactions.find((row) => row.id === id); if (item) item.reviewed = false; });
+        commit("رجّعتها لقائمة المراجعة");
+      } });
+      return;
+    }
+    const draftAmountId = event.target.dataset.draftAmount;
+    if (draftAmountId) {
+      const draft = state.bankDrafts.find((item) => item.id === draftAmountId);
+      if (draft) openTransaction(null, null, draft);
+      return;
+    }
+    const draftDeleteId = event.target.dataset.draftDelete;
+    if (draftDeleteId) {
+      const draft = state.bankDrafts.find((item) => item.id === draftDeleteId);
+      if (!draft) return;
+      state.bankDrafts = state.bankDrafts.filter((item) => item.id !== draftDeleteId);
+      commit("تجاهلت الإشعار", { undo: () => { state.bankDrafts.push(draft); commit("رجّعت الإشعار"); } });
       return;
     }
     const syncId = event.target.dataset.syncBalance;
@@ -2599,7 +3315,7 @@ function bindEvents() {
       item.reviewed = true;
       item.possibleDuplicate = false;
       learnMerchant(item);
-      saveState(); renderAll(); toast("تم اعتماد العملية وتعلّم اسم التاجر");
+      commit("تم اعتماد العملية", { undo: () => { item.reviewed = false; commit("رجّعتها للمراجعة"); } });
     }
     if (reviewId) {
       const item = state.transactions.find((transaction) => transaction.id === reviewId);
@@ -2626,28 +3342,17 @@ function bindEvents() {
         saveState(); renderAll(); toast(commitment.status === "active" ? "تمت إعادة تفعيل الالتزام" : "تم إيقاف الالتزام مؤقتاً");
       }
     }
-    if (paidId) {
-      const commitment = state.monthlyCommitments.find((item) => item.id === paidId);
-      const dueDate = event.target.dataset.dueDate;
-      if (!commitment || !validDate(dueDate)) return;
-      const existingIndex = state.commitmentPayments.findIndex((item) => item.commitmentId === paidId && item.dueDate === dueDate && item.status !== "reversed");
-      if (existingIndex >= 0) {
-        state.commitmentPayments.splice(existingIndex, 1);
-        toast("تم التراجع عن تسجيل الدفع");
-      } else {
-        state.commitmentPayments.push({ id: createId(), commitmentId: paidId, amountFils: commitment.amountFils, dueDate, paidAt: todayISO(), status: "paid" });
-        toast("تم تسجيل الالتزام كمدفوع");
-      }
-      saveState(); renderAll();
-    }
+    if (paidId) markCommitmentPaid(paidId, event.target.dataset.dueDate);
   });
   $("#loan-list").addEventListener("click", (event) => {
     const editId = event.target.dataset.editLoan;
     const deleteId = event.target.dataset.deleteLoan;
     const extraId = event.target.dataset.extraPayment;
+    const payId = event.target.dataset.payInstallment;
     if (editId) openLoan(state.loans.find((item) => item.id === editId));
     if (deleteId) removeRecord("loans", deleteId, "القرض");
     if (extraId) openExtraPayment(state.loans.find((item) => item.id === extraId));
+    if (payId) payLoanInstallment(payId, event.target.dataset.dueDate);
   });
   $("#goal-list").addEventListener("click", (event) => {
     const editId = event.target.dataset.editGoal;
@@ -2726,10 +3431,11 @@ function initialize() {
   $("#loan-type").innerHTML = debtTypes.map((type) => `<option value="${escapeHTML(type)}">${escapeHTML(type)}</option>`).join("");
   updateCommitmentCategoryFilterOptions();
   bindEvents(); renderBankFieldOrder(); setupInstall(); renderAll({ investmentInputs: true }); captureFinancialSnapshot();
-  const linkHandled = handlePortfolioLink() || handleBankAutomationLink();
-  if (!linkHandled) switchView(location.hash.slice(1) || "dashboard", false);
   if (lockRecord) lockApp();
-  else if (!linkHandled && !state.ui.onboarded && state.settings.incomeFils === 0) setTimeout(openOnboarding, 350);
+  const linkHandled = handlePortfolioLink() || handleBankAutomationLink();
+  if (!linkHandled && !lockedNow) switchView(location.hash.slice(1) || "dashboard", false);
+  if (!lockRecord && !linkHandled && !state.ui.onboarded && state.settings.incomeFils === 0) setTimeout(openOnboarding, 350);
+  renderStorageWarning();
   if (!storageAvailable) toast("التخزين المحلي غير متاح؛ البيانات لن تستمر بعد إغلاق الصفحة.");
   navigator.storage?.persist?.().catch(() => {});
   if ("serviceWorker" in navigator && location.protocol !== "file:") {

@@ -1,27 +1,31 @@
-import { formatMoney, moneyInput, parseMoney } from "./finance-core.js";
+import { formatMoney, moneyInput, parseCount, parseMoney } from "./finance-core.js";
+import { monthlySurplus } from "./financial-engine.js";
 
 const dinar = (fils) => Math.round(fils / 1000) * 1000;
 
-/* خطة مبدئية بسيطة: ٧٠٪ مصروف، ٢٠٪ ادخار، ١٠٪ هامش أمان. كلها قابلة للتعديل لاحقاً. */
-export function buildStarterPlan({ incomeFils, savingsFils = 0, salaryDay = 25 } = {}) {
+/* خطة مبدئية بسيطة: ٧٠٪ مصروف، ٢٠٪ ادخار، ١٠٪ هامش أمان. كلها قابلة للتعديل لاحقاً.
+   إذا عند المستخدم أقساط والتزامات مسجلة، النسب تنحسب من الباقي بعدها (نفس دالة الفائض الشهري) — F27. */
+export function buildStarterPlan({ incomeFils, savingsFils = 0, salaryDay = 25, fixedFils = 0 } = {}) {
   if (!Number.isSafeInteger(incomeFils) || incomeFils <= 0 || !Number.isSafeInteger(savingsFils) || savingsFils < 0 ||
       !Number.isInteger(salaryDay) || salaryDay < 1 || salaryDay > 31) return null;
-  const budgetFils = dinar(incomeFils * 0.7);
-  const safetyBufferFils = dinar(incomeFils * 0.1);
-  const monthlySaveFils = dinar(incomeFils * 0.2);
-  const emergencyTargetFils = Math.max(budgetFils * 3, 1000);
+  const fixed = Number.isSafeInteger(fixedFils) && fixedFils > 0 ? fixedFils : 0;
+  const spendableFils = Math.max(monthlySurplus({ incomeFils, commitmentsFils: fixed }).surplusFils, 0);
+  const budgetFils = dinar(spendableFils * 0.7);
+  const safetyBufferFils = dinar(spendableFils * 0.1);
+  const monthlySaveFils = dinar(spendableFils * 0.2);
+  const emergencyTargetFils = Math.max(dinar((budgetFils + fixed) * 3), 1000);
   const gapFils = Math.max(emergencyTargetFils - savingsFils, 0);
   const monthsToTarget = gapFils === 0 ? 0 : monthlySaveFils > 0 ? Math.ceil(gapFils / monthlySaveFils) : null;
-  const monthsCovered = budgetFils > 0 ? savingsFils / budgetFils : 0;
+  const monthsCovered = budgetFils + fixed > 0 ? savingsFils / (budgetFils + fixed) : 0;
   const level = monthsCovered >= 3 ? "strong" : monthsCovered >= 1 ? "ok" : "start";
-  return { incomeFils, savingsFils, salaryDay, budgetFils, safetyBufferFils, monthlySaveFils, emergencyTargetFils,
+  return { incomeFils, savingsFils, salaryDay, fixedFils: fixed, spendableFils, budgetFils, safetyBufferFils, monthlySaveFils, emergencyTargetFils,
     dailyFils: Math.floor(budgetFils / 30), gapFils, monthsToTarget, monthsCovered, level };
 }
 
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = (value) => Number(value).toLocaleString("ar-KW-u-nu-latn");
 
-export function mountOnboarding(root, { getSettings, onApply, onSkip }) {
+export function mountOnboarding(root, { getSettings, getFixedFils = () => 0, onApply, onSkip }) {
   let step = 0;
   let answers = { income: "", savings: "", salaryDay: "25" };
   let error = "";
@@ -37,7 +41,7 @@ export function mountOnboarding(root, { getSettings, onApply, onSkip }) {
     if (step === 0) {
       root.innerHTML = frame("هلا فيك 👋", `
         <p class="ob-big">أنا أرتّب لك فلوسك بكل بساطة، وما تحتاج تفهم شي معقد.</p>
-        <p class="hint">بسألك ٣ أسئلة صغيرة بس: كم معاشك، وكم عندك محوّش، ومتى ينزل الراتب. وبعدها أضبط لك كل شي: ميزانيتك، مصروفك اليومي، وهدف صندوق الطوارئ.</p>`,
+        <p class="hint">بسألك 3 أسئلة صغيرة بس: كم معاشك، وكم عندك محوّش، ومتى ينزل الراتب. وبعدها أضبط لك كل شي: ميزانيتك، مصروفك اليومي، وهدف صندوق الطوارئ.</p>`,
         `<button type="button" class="secondary" data-ob="skip">لاحقاً</button><button type="button" class="primary" data-ob="next">يلا نبدأ</button>`);
     } else if (step === 1) {
       root.innerHTML = frame("كم معاشك الشهري؟", `
@@ -53,12 +57,13 @@ export function mountOnboarding(root, { getSettings, onApply, onSkip }) {
     } else if (step === 3) {
       root.innerHTML = frame("متى ينزل راتبك؟", `
         <p class="ob-big">أي يوم من الشهر؟</p>
-        <label class="field"><span>يوم نزول الراتب (١ إلى ٣١)</span><input id="ob-day" type="number" min="1" max="31" inputmode="numeric" value="${esc(answers.salaryDay)}"></label>`,
+        <label class="field"><span>يوم نزول الراتب (1 إلى 31)</span><input id="ob-day" type="text" inputmode="numeric" autocomplete="off" value="${esc(answers.salaryDay)}"></label>`,
         `<button type="button" class="secondary" data-ob="back">رجوع</button><button type="button" class="primary" data-ob="next">شوف خطتي</button>`);
     } else {
-      const plan = buildStarterPlan({ incomeFils: parseMoney(answers.income), savingsFils: parseMoney(answers.savings) ?? 0, salaryDay: Number(answers.salaryDay) });
+      const plan = buildStarterPlan({ incomeFils: parseMoney(answers.income), savingsFils: parseMoney(answers.savings) ?? 0, salaryDay: parseCount(answers.salaryDay, { min: 1, max: 31 }) ?? 0, fixedFils: getFixedFils() });
       if (!plan) { step = 1; error = "فيه رقم غير صحيح، راجع إجاباتك."; render(); return; }
-      const verdict = plan.level === "strong" ? "وضعك ممتاز، عندك احتياطي يغطي ٣ شهور أو أكثر 👏"
+      const verdict = plan.fixedFils > 0 && plan.spendableFils === 0 ? "دخلك ما يغطي أقساطك والتزاماتك المسجلة، فأول خطوة نخفف الالتزامات قبل أي ادخار."
+        : plan.level === "strong" ? "وضعك ممتاز، عندك احتياطي يغطي 3 شهور أو أكثر 👏"
         : plan.level === "ok" ? "بداية حلوة، عندك احتياطي شهر على الأقل 👍"
         : "ما عليك، نبدأ خطوة خطوة. أهم شي نبني احتياطي 💪";
       root.innerHTML = frame("خطتك جاهزة ✅", `
@@ -68,10 +73,12 @@ export function mountOnboarding(root, { getSettings, onApply, onSkip }) {
           <div><span>يعني تقريباً باليوم</span><strong>${esc(formatMoney(plan.dailyFils))}</strong></div>
           <div><span>وفّر بالشهر</span><strong>${esc(formatMoney(plan.monthlySaveFils))}</strong></div>
           <div><span>هامش أمان ما تلمسه</span><strong>${esc(formatMoney(plan.safetyBufferFils))}</strong></div>
-          <div class="advisor-budget-total"><span>هدف صندوق الطوارئ (٣ شهور)</span><strong>${esc(formatMoney(plan.emergencyTargetFils))}</strong></div>
+          <div class="advisor-budget-total"><span>هدف صندوق الطوارئ (3 شهور)</span><strong>${esc(formatMoney(plan.emergencyTargetFils))}</strong></div>
         </div>
         <p class="hint">${plan.monthsToTarget === 0 ? "وصلت هدف الطوارئ أصلاً." : plan.monthsToTarget === null ? "" : `إذا وفّرت المبلغ كل شهر توصل لهدف الطوارئ بعد حوالي ${num(plan.monthsToTarget)} شهر.`}
-        هذي أرقام مبدئية (٧٠٪ مصروف، ٢٠٪ ادخار، ١٠٪ أمان)، وتقدر تعدلها من الإعدادات. القروض والأقساط أضفها من «المزيد» ليصير الحساب أدق.</p>`,
+        ${plan.fixedFils > 0
+          ? `حسبتها بعد أقساطك والتزاماتك المسجلة (${esc(formatMoney(plan.fixedFils))} شهرياً): من الباقي ${esc(formatMoney(plan.spendableFils))} 70٪ مصروف، 20٪ ادخار، 10٪ أمان. وهدف الطوارئ يغطي 3 شهور من المصروف والالتزامات.`
+          : "هذي أرقام مبدئية (70٪ مصروف، 20٪ ادخار، 10٪ أمان)، وتقدر تعدلها من الإعدادات. القروض والأقساط أضفها من «المزيد» ليصير الحساب أدق."}</p>`,
         `<button type="button" class="secondary" data-ob="back">رجوع</button><button type="button" class="primary" data-ob="apply">طبّق الخطة</button>`);
       root._plan = plan;
     }
@@ -89,8 +96,9 @@ export function mountOnboarding(root, { getSettings, onApply, onSkip }) {
       if (parseMoney(value) === null) { error = "اكتب المدخرات كرقم، أو 0 إذا ما عندك."; return false; }
       answers.savings = value;
     } else if (step === 3) {
-      const day = Number(root.querySelector("#ob-day")?.value);
-      if (!Number.isInteger(day) || day < 1 || day > 31) { error = "اكتب يوم من ١ إلى ٣١."; return false; }
+      // الأرقام العربية (٢٥) تنقبل مثل اللاتينية (F16)
+      const day = parseCount(root.querySelector("#ob-day")?.value ?? "", { min: 1, max: 31 });
+      if (day === null) { error = "اكتب يوم من 1 إلى 31."; return false; }
       answers.salaryDay = String(day);
     }
     return true;

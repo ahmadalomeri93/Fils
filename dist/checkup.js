@@ -5,6 +5,15 @@ const clamp = (value, low = 0, high = 100) => Math.min(high, Math.max(low, value
 const lerp = (value, worst, best) => clamp(((value - worst) / (best - worst)) * 100);
 const fin = (value) => Number.isFinite(value) ? value : 0;
 
+/* نسبة بعلامة صريحة: «−0.0٪» مالها معنى، فنقرّب الصفر إلى صفر ونضع علامة الطرح بعلامة اتجاه (F57). */
+export function signedPercent(value, digits = 1) {
+  if (!Number.isFinite(value)) return "—";
+  const factor = 10 ** digits;
+  const rounded = Math.round(value * factor) / factor;
+  const safe = Object.is(rounded, -0) || rounded === 0 ? 0 : rounded;
+  return `${safe < 0 ? "\u200E\u2212" : ""}${Math.abs(safe).toFixed(digits)}`;
+}
+
 /* ---------- 1) المؤشر الصحي المالي ---------- */
 export function healthScore({
   incomeFils = 0, livingFils = 0, commitmentsFils = 0, debtPaymentsFils = 0,
@@ -19,14 +28,14 @@ export function healthScore({
 
   const components = [
     { key: "savings", label: "معدل الادخار", weight: 30, value: savingsRate, score: lerp(savingsRate, 0, 20),
-      display: `${savingsRate.toFixed(1)}٪ من الدخل`, target: "الهدف ٢٠٪ فأكثر" },
+      display: `${signedPercent(savingsRate)}٪ من الدخل`, target: "الهدف 20٪ فأكثر" },
     { key: "dti", label: "عبء الأقساط (DTI)", weight: 25, value: dti, score: lerp(dti, 50, 20),
-      display: `${dti.toFixed(1)}٪ من الدخل`, target: "الأفضل أقل من ٢٠٪، والخطر فوق ٤٠٪" },
+      display: `${signedPercent(dti)}٪ من الدخل`, target: "الأفضل أقل من 20٪، والخطر فوق 40٪" },
     { key: "reserve", label: "احتياطي الطوارئ", weight: 30, value: monthsCovered,
       score: monthsCovered === null ? 0 : lerp(monthsCovered, 0, 6),
-      display: monthsCovered === null ? "—" : `${monthsCovered.toFixed(1)} شهر`, target: "الهدف ٣ إلى ٦ أشهر من الصرف الإلزامي" },
+      display: monthsCovered === null ? "—" : `${monthsCovered.toFixed(1)} شهر`, target: "الهدف 3 إلى 6 أشهر من الصرف الإلزامي" },
     { key: "debtLoad", label: "الدين مقابل الدخل السنوي", weight: 15, value: debtToAnnual,
-      score: lerp(debtToAnnual, 2, 0.25), display: `${debtToAnnual.toFixed(2)}× الدخل السنوي`, target: "الأفضل أقل من ٠٫٥×" }
+      score: lerp(debtToAnnual, 2, 0.25), display: `${debtToAnnual.toFixed(2)}× الدخل السنوي`, target: "الأفضل أقل من 0.5× الدخل السنوي" }
   ];
   let score = components.reduce((sum, item) => sum + item.score * item.weight, 0) / 100;
   if (overdue) score = Math.min(score, 40);
@@ -109,7 +118,7 @@ export function portfolioConcentration(holdings = [], overrides = {}) {
   const warnings = [];
   if (withShare[0].sharePercent > 40) warnings.push(`سهم ${withShare[0].name} يمثل ${withShare[0].sharePercent.toFixed(0)}٪ من المحفظة — تركز مرتفع في شركة واحدة.`);
   if (sectors[0].sharePercent > 60) warnings.push(`قطاع «${sectors[0].sector}» يمثل ${sectors[0].sharePercent.toFixed(0)}٪ — تركز قطاعي مرتفع.`);
-  if (withShare.length < 5) warnings.push(`المحفظة ${withShare.length} أسهم فقط؛ التنويع الجيد يبدأ عادة من ٥ شركات في قطاعات مختلفة.`);
+  if (withShare.length < 5) warnings.push(`المحفظة ${withShare.length} أسهم فقط؛ التنويع الجيد يبدأ عادة من 5 شركات في قطاعات مختلفة.`);
   return { rows: withShare, sectors, totalFils: total, hhi, warnings };
 }
 
@@ -172,7 +181,7 @@ export function mountCheckup(root, { getModel, getUi, setUi }) {
       ? `<p class="hint">أدخل سعر جرام الذهب اليوم لحساب النصاب (${NISAB_GOLD_GRAMS} جرام).</p>`
       : `<div><span>النصاب</span><strong>${esc(formatMoney(result.nisabFils))}</strong></div>
          <div><span>الوعاء الزكوي</span><strong>${esc(formatMoney(result.netFils))}</strong></div>
-         <div class="advisor-budget-total"><span>${result.due ? "الزكاة المستحقة ٢٫٥٪" : "لم يبلغ النصاب"}</span><strong>${esc(formatMoney(result.zakatFils))}</strong></div>`;
+         <div class="advisor-budget-total"><span>${result.due ? "الزكاة المستحقة 2.5٪" : "لم يبلغ النصاب"}</span><strong>${esc(formatMoney(result.zakatFils))}</strong></div>`;
   }
 
   function updateReal() {
@@ -219,7 +228,7 @@ export function mountCheckup(root, { getModel, getUi, setUi }) {
           <div class="cu-rows">${health.components.map((c) => `
             <div class="cu-row"><div><strong>${c.label}</strong><small>${c.target}</small></div>
               <div><b>${esc(c.display)}</b><div class="cu-bar small"><span style="width:${Math.round(c.score)}%;background:${scoreColor(c.score)}"></span></div></div></div>`).join("")}</div>
-          <p class="hint"><b>أضعف نقطة:</b> ${health.weakest.label}.${health.overdue ? " يوجد قرض متأخر، لذلك لا يتجاوز التقييم ٤٠ حتى تنتظم الدفعات." : ""}
+          <p class="hint"><b>أضعف نقطة:</b> ${health.weakest.label}.${health.overdue ? " يوجد قرض متأخر، لذلك لا يتجاوز التقييم 40 حتى تنتظم الدفعات." : ""}
           المؤشر يعتمد على بياناتك المسجلة فقط وهو إرشاد عام وليس استشارة مرخصة.</p>`
         : `<p class="hint">أدخل دخلك ومصروفك الشهري في الإعدادات ليظهر التقييم.</p>`}
       </section>
@@ -253,7 +262,7 @@ export function mountCheckup(root, { getModel, getUi, setUi }) {
           <h3>حسب القطاع</h3>
           <div class="advisor-budget-list">${conc.sectors.map((s) => `<div><span>${esc(s.sector)}</span><strong>${n1(s.sharePercent)}٪</strong></div>`).join("")}</div>
           ${conc.warnings.map((w) => `<p class="hint warn-hint">⚠ ${esc(w)}</p>`).join("") || `<p class="hint">توزيع المحفظة متوازن نسبياً.</p>`}
-          <p class="hint">القطاع الافتراضي تقدير من أول رقم بالرمز (١ بنوك، ٢ استثمار، ٣ تأمين، ٤ عقار) ولم أتحقق منه رسمياً. غيّره لكل سهم من القائمة إذا كان تصنيفه مختلفاً.</p>`
+          <p class="hint">القطاع الافتراضي تقدير من أول رقم بالرمز (1 بنوك، 2 استثمار، 3 تأمين، 4 عقار) ولم أتحقق منه رسمياً. غيّره لكل سهم من القائمة إذا كان تصنيفه مختلفاً.</p>`
         : `<p class="hint">أضف أسهماً في صفحة الاستثمار لعرض التركز.</p>`}
       </section>
 
@@ -278,7 +287,7 @@ export function mountCheckup(root, { getModel, getUi, setUi }) {
         <div class="section-heading"><div><span class="eyebrow">فريضة</span><h2>حاسبة الزكاة</h2></div></div>
         <p class="hint">تُحسب على النقد وقيمة الأسهم الحالية المسجلين في التطبيق، وتضيف أنت ما عداها. النصاب ${NISAB_GOLD_GRAMS} جراماً من الذهب، ويشترط مرور حول هجري. للأحكام التفصيلية راجع جهة شرعية معتمدة كبيت الزكاة.</p>
         <div class="form-grid">
-          <label class="field"><span>سعر جرام الذهب عيار ٢٤ اليوم</span><div class="money-field"><input id="cu-gold" inputmode="decimal" value="${ui.goldGramFils ? moneyInput(ui.goldGramFils) : ""}"><b>د.ك</b></div></label>
+          <label class="field"><span>سعر جرام الذهب عيار 24 اليوم</span><div class="money-field"><input id="cu-gold" inputmode="decimal" value="${ui.goldGramFils ? moneyInput(ui.goldGramFils) : ""}"><b>د.ك</b></div></label>
           <label class="field"><span>ذهب وفضة مملوكة للادخار (قيمة)</span><div class="money-field"><input id="cu-z-gold" inputmode="decimal" value="${ui.zakatGoldFils ? moneyInput(ui.zakatGoldFils) : ""}"><b>د.ك</b></div></label>
           <label class="field"><span>أصول أخرى زكوية (ودائع، ديون لك…)</span><div class="money-field"><input id="cu-z-other" inputmode="decimal" value="${ui.zakatOtherFils ? moneyInput(ui.zakatOtherFils) : ""}"><b>د.ك</b></div></label>
           <label class="field"><span>ديون حالّة خلال السنة (تُخصم)</span><div class="money-field"><input id="cu-z-debts" inputmode="decimal" value="${ui.zakatDebtsFils ? moneyInput(ui.zakatDebtsFils) : ""}"><b>د.ك</b></div></label>

@@ -1,4 +1,4 @@
-import { normalizeDigits, parseMoney, payoff } from "./finance-core.js";
+import { countLabel, normalizeDigits, parseMoney, payoff } from "./finance-core.js";
 
 const DAY_MS = 86_400_000;
 const ACTIVE_DEBT_STATUSES = new Set(["active", "overdue"]);
@@ -80,8 +80,14 @@ export function monthlyCommitmentEquivalent(commitment) {
   return divider ? Math.round(amount / divider) : 0;
 }
 
+/* الالتزام أو القسط له استحقاق واحد بالشهر على الأكثر، فالدفعة تُطابق بالشهر نفسه:
+   تعديل يوم الاستحقاق بعد الدفع (15 → 16) ما يلغي الدفعة (F26). */
+export function sameDueMonth(a, b) {
+  return typeof a === "string" && typeof b === "string" && a.length >= 7 && a.slice(0, 7) === b.slice(0, 7);
+}
+
 function occurrencePaid(payments, entityKey, entityId, dueDate) {
-  return payments.some((payment) => payment?.[entityKey] === entityId && payment?.dueDate === dueDate && payment?.status !== "reversed");
+  return payments.some((payment) => payment?.[entityKey] === entityId && sameDueMonth(payment?.dueDate, dueDate) && payment?.status !== "reversed");
 }
 
 export function commitmentOccurrences(commitments = [], { fromISO, toISO, payments = [], includePaused = false } = {}) {
@@ -120,20 +126,40 @@ function toISODate(date) {
   return toISO(date);
 }
 
+/* المدفوع هذا الشهر يُحسب من الدفعات المسجلة نفسها (المبلغ اللي انفع)، فتعديل الالتزام أو إيقافه
+   بعد الدفع ما يلغي الدفعة ولا يغيّر مبلغها. */
+export function commitmentPaidThisMonth(commitments = [], payments = [], todayISO) {
+  const bounds = monthBounds(todayISO);
+  if (!bounds) return 0;
+  const known = new Set(commitments.map((item) => item?.id).filter(Boolean));
+  return payments
+    .filter((payment) => payment?.status !== "reversed" && validFils(payment?.amountFils) && known.has(payment?.commitmentId))
+    .filter((payment) => {
+      const date = payment.dueDate || payment.paidAt;
+      return typeof date === "string" && date >= bounds.startISO && date <= bounds.endISO;
+    })
+    .reduce((sum, payment) => sum + payment.amountFils, 0);
+}
+
 export function commitmentSummary(commitments = [], payments = [], todayISO) {
   const bounds = monthBounds(todayISO);
   if (!bounds) return null;
   const occurrences = commitmentOccurrences(commitments, { fromISO: bounds.startISO, toISO: bounds.endISO, payments });
-  const upcoming = commitmentOccurrences(commitments, { fromISO: todayISO, toISO: addDaysISO(todayISO, 366), payments })
+  // الاستحقاق القادم يبدأ من أول الشهر حتى يظهر المتأخر غير المدفوع بدل ما ينتقل للشهر الجاي
+  const upcoming = commitmentOccurrences(commitments, { fromISO: bounds.startISO, toISO: addDaysISO(todayISO, 366), payments })
     .filter((item) => !item.paid);
   const monthlyEquivalentFils = commitments.reduce((sum, item) => sum + monthlyCommitmentEquivalent(item), 0);
+  const overdue = occurrences.filter((item) => !item.paid && item.dueDate < todayISO);
   return {
     monthlyEquivalentFils,
     dueThisMonthFils: occurrences.reduce((sum, item) => sum + item.amountFils, 0),
-    paidThisMonthFils: occurrences.filter((item) => item.paid).reduce((sum, item) => sum + item.amountFils, 0),
+    paidThisMonthFils: commitmentPaidThisMonth(commitments, payments, todayISO),
     remainingThisMonthFils: occurrences.filter((item) => !item.paid).reduce((sum, item) => sum + item.amountFils, 0),
     dueThisMonth: occurrences,
-    nextUpcoming: upcoming[0] ?? null
+    overdue,
+    overdueFils: overdue.reduce((sum, item) => sum + item.amountFils, 0),
+    nextUpcoming: upcoming[0] ?? null,
+    nextUpcomingSameDay: upcoming.filter((item) => upcoming[0] && item.dueDate === upcoming[0].dueDate)
   };
 }
 
@@ -173,37 +199,65 @@ export function remainingInstallments(debt) {
   return result?.months ?? null;
 }
 
+/* تاريخ القسط القادم: يوم الخصم القادم من اليوم (أو نفس اليوم إذا ما فات). */
+export function nextDebtDueDate(debt, todayISO) {
+  const today = parseISO(todayISO);
+  if (!today) return null;
+  const day = Number.isInteger(debt?.dueDay) ? debt.dueDay : 1;
+  let due = clampedDate(today.getFullYear(), today.getMonth(), day);
+  if (due < today) due = clampedDate(today.getFullYear(), today.getMonth() + 1, day);
+  return toISO(due);
+}
+
+/* نهاية القرض = القسط القادم + (الأقساط المتبقية − 1)، وليست من تاريخ اليوم.
+   التاريخ المسجل من البنك يسبق الحساب التقديري. */
+export function debtEndDate(debt, todayISO, months = null) {
+  const remaining = months === null ? remainingInstallments(debt) : months;
+  if (remaining === null) return null;
+  if (remaining <= 0) return todayISO;
+  const next = nextDebtDueDate(debt, todayISO);
+  return next ? addMonthsISO(next, remaining - 1) : null;
+}
+
+/* نسبة السداد من رأس المال: (الأصلي − المتبقي) ÷ الأصلي، فلا تصير 100٪ لأن المدفوع المسجل أكبر. */
 export function debtProgress(debt) {
   const original = validFils(debt?.originalAmountFils) && debt.originalAmountFils > 0
     ? debt.originalAmountFils
     : Math.max((debt?.balanceFils ?? 0) + (debt?.totalPaidFils ?? 0), debt?.balanceFils ?? 0);
   const remaining = validFils(debt?.balanceFils) ? debt.balanceFils : 0;
-  const paidFromBalance = Math.max(original - remaining, 0);
-  const paidFils = Math.max(validFils(debt?.totalPaidFils) ? debt.totalPaidFils : 0, paidFromBalance);
+  const paidFils = Math.max(original - remaining, 0);
+  const totalPaidFils = validFils(debt?.totalPaidFils) ? debt.totalPaidFils : 0;
   const percent = original > 0 ? Math.min(Math.round((paidFils / original) * 100), 100) : 0;
-  return { originalAmountFils: original, paidFils, percent };
+  return { originalAmountFils: original, paidFils, totalPaidFils, percent };
 }
 
 export function debtSummary(debts = [], { incomeFils = 0, todayISO, payments = [] } = {}) {
-  const considered = debts.filter((debt) => debt?.status !== "completed" && debt?.status !== "stopped");
+  // القرض المتوقف لا يزال ديناً على المؤسس حتى لو ما فيه قسط شهري؛ المكتمل فقط يُستبعد من الرصيد
+  const considered = debts.filter((debt) => debt?.status !== "completed");
   const active = debts.filter((debt) => ACTIVE_DEBT_STATUSES.has(debt?.status ?? "active"));
+  const stopped = debts.filter((debt) => debt?.status === "stopped");
   const totalBalanceFils = considered.reduce((sum, debt) => sum + (validFils(debt.balanceFils) ? debt.balanceFils : 0), 0);
   const monthlyPaymentsFils = active.reduce((sum, debt) => sum + (validFils(debt.installmentFils) ? debt.installmentFils : 0), 0);
-  const upcoming = debtOccurrences(active, { fromISO: todayISO, toISO: addDaysISO(todayISO, 62), payments }).filter((item) => !item.paid);
-  let longestMonths = 0;
+  const monthStart = monthBounds(todayISO)?.startISO ?? todayISO;
+  const upcoming = debtOccurrences(active, { fromISO: monthStart, toISO: addDaysISO(todayISO, 62), payments }).filter((item) => !item.paid);
+  let latestEnd = "";
   let payoffKnown = true;
   for (const debt of active) {
     const months = remainingInstallments(debt);
-    if (months === null) payoffKnown = false;
-    else longestMonths = Math.max(longestMonths, months);
+    if (months === null) { payoffKnown = false; continue; }
+    const end = debt.endDate || debtEndDate(debt, todayISO, months);
+    if (!end) { payoffKnown = false; continue; }
+    if (end > latestEnd) latestEnd = end;
   }
   return {
     totalBalanceFils,
+    stoppedBalanceFils: stopped.reduce((sum, debt) => sum + (validFils(debt.balanceFils) ? debt.balanceFils : 0), 0),
     monthlyPaymentsFils,
     activeCount: active.length,
     nextPayment: upcoming[0] ?? null,
+    nextPaymentSameDay: upcoming.filter((item) => upcoming[0] && item.dueDate === upcoming[0].dueDate),
     dtiPercent: incomeFils > 0 ? (monthlyPaymentsFils / incomeFils) * 100 : null,
-    zeroDebtDate: payoffKnown && active.length ? addMonthsISO(todayISO, longestMonths) : active.length ? null : todayISO
+    zeroDebtDate: payoffKnown && active.length ? latestEnd : active.length ? null : (debts.length ? todayISO : null)
   };
 }
 
@@ -221,11 +275,13 @@ export function simulateExtraPayment(debt, extraFils, todayISO) {
     beforeBalanceFils,
     afterBalanceFils,
     appliedFils,
+    requestedFils: extraFils,
+    unusedFils: Math.max(extraFils - appliedFils, 0),
     currentMonths,
     expectedMonths: next.months,
     monthsShortened: Math.max(currentMonths - next.months, 0),
-    currentEndDate: debt.endDate || addMonthsISO(todayISO, currentMonths),
-    expectedEndDate: addMonthsISO(todayISO, next.months),
+    currentEndDate: debt.endDate || debtEndDate(debt, todayISO, currentMonths),
+    expectedEndDate: debtEndDate(debt, todayISO, next.months),
     balanceDifferenceFils: appliedFils,
     estimatedChargeSavingsFils: annualRate > 0 && debt.interestRateKnown === true ? Math.max(current.chargesFils - next.chargesFils, 0) : null
   };
@@ -245,13 +301,26 @@ export function safeToSpendEngine({
 } = {}) {
   const paydayISO = nextIncomeDate(todayISO, salaryDay);
   if (!paydayISO) return null;
-  const debtDue = debtOccurrences(debts, { fromISO: todayISO, toISO: paydayISO, payments: debtPayments }).filter((item) => !item.paid);
-  const commitmentDue = commitmentOccurrences(commitments, { fromISO: todayISO, toISO: paydayISO, payments: commitmentPayments }).filter((item) => !item.paid);
+  // المستحق قبل الراتب فقط: مستحقات يوم الراتب نفسه يغطيها الراتب، وتظهر بسطر منفصل.
+  // ونبدأ من أول الشهر حتى يُحجز المتأخر غير المدفوع.
+  const monthStart = monthBounds(todayISO)?.startISO ?? todayISO;
+  const beforePaydayISO = addDaysISO(paydayISO, -1) ?? paydayISO;
   const cardReserve = creditCards.length
     ? creditCards.filter((card) => card?.status !== "paused").reduce((sum, card) => sum + (validFils(card.reservedPaymentFils) ? card.reservedPaymentFils : 0), 0)
     : (validFils(reservedCreditCardFils) ? reservedCreditCardFils : 0);
+  // التزامات البطاقة الائتمانية داخلة في حجز دفعة البطاقة، فلا تُحجز مرتين
+  const cardCovered = (item) => cardReserve > 0 && item.paymentMethod === "credit_card";
+  const allDebtDue = debtOccurrences(debts, { fromISO: monthStart, toISO: paydayISO, payments: debtPayments }).filter((item) => !item.paid);
+  const allCommitmentDue = commitmentOccurrences(commitments, { fromISO: monthStart, toISO: paydayISO, payments: commitmentPayments }).filter((item) => !item.paid);
+  const debtDue = allDebtDue.filter((item) => item.dueDate <= beforePaydayISO);
+  const commitmentDue = allCommitmentDue.filter((item) => item.dueDate <= beforePaydayISO && !cardCovered(item));
+  const paydayDebtDue = allDebtDue.filter((item) => item.dueDate > beforePaydayISO);
+  const paydayCommitmentDue = allCommitmentDue.filter((item) => item.dueDate > beforePaydayISO && !cardCovered(item));
+  const cardCommitmentsFils = allCommitmentDue.filter(cardCovered).reduce((sum, item) => sum + item.amountFils, 0);
   const upcomingDebtPaymentsFils = debtDue.reduce((sum, item) => sum + item.installmentFils, 0);
   const upcomingCommitmentsFils = commitmentDue.reduce((sum, item) => sum + item.amountFils, 0);
+  const paydayDueFils = paydayDebtDue.reduce((sum, item) => sum + item.installmentFils, 0) +
+    paydayCommitmentDue.reduce((sum, item) => sum + item.amountFils, 0);
   const committedFils = upcomingDebtPaymentsFils + upcomingCommitmentsFils + cardReserve + Math.max(safetyBufferFils, 0);
   const rawSafeFils = Math.max(availableCashFils, 0) - committedFils;
   const untilPayday = Math.max(daysBetween(todayISO, paydayISO) ?? 0, 1);
@@ -261,6 +330,10 @@ export function safeToSpendEngine({
     daysUntilPayday: untilPayday,
     upcomingDebtPaymentsFils,
     upcomingCommitmentsFils,
+    paydayDueFils,
+    paydayDebtDue,
+    paydayCommitmentDue,
+    cardCommitmentsFils,
     reservedCreditCardFils: cardReserve,
     safetyBufferFils: Math.max(safetyBufferFils, 0),
     committedFils,
@@ -276,6 +349,48 @@ function reviewedExpenses(transactions = []) {
   return transactions.filter((item) => item?.kind === "expense" && item?.reviewed !== false && validFils(item?.amountFils));
 }
 
+/* مصروف المعيشة: المصروف المعتمد بدون تصنيف «قسط»، لأن الأقساط تُخصم كأقساط ومرة وحدة فقط. */
+export const INSTALLMENT_CATEGORY = "قسط";
+export function livingExpenses(transactions = []) {
+  return reviewedExpenses(transactions).filter((item) => item.category !== INSTALLMENT_CATEGORY);
+}
+
+/* متوسط المعيشة من آخر N شهر مكتمل (بدون الشهر الحالي وبدون «قسط»). */
+export function livingBaseline(transactions = [], todayISO, { months = 3, budgetFils = 0 } = {}) {
+  const bounds = monthBounds(todayISO);
+  if (!bounds) return { amountFils: 0, source: "missing", months: 0 };
+  const [year, month] = todayISO.split("-").map(Number);
+  const keys = Array.from({ length: months }, (_, index) => {
+    const date = new Date(year, month - 2 - index, 1, 12);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const totals = new Map(keys.map((key) => [key, 0]));
+  for (const item of livingExpenses(transactions)) {
+    const key = String(item.date).slice(0, 7);
+    if (totals.has(key)) totals.set(key, totals.get(key) + item.amountFils);
+  }
+  const observed = [...totals.values()].filter((amount) => amount > 0).length;
+  if (observed === months) {
+    return { amountFils: Math.round([...totals.values()].reduce((sum, amount) => sum + amount, 0) / months), source: "transactions", months: observed };
+  }
+  if (validFils(budgetFils) && budgetFils > 0) return { amountFils: budgetFils, source: "budget", months: observed };
+  return { amountFils: 0, source: "missing", months: observed };
+}
+
+/* رقم واحد للفائض/العجز الشهري يُستخدم في المستشار والفحص وخطة الراتب والأهداف:
+   الدخل − الأقساط − الالتزامات − متوسط المعيشة. */
+export function monthlySurplus({ incomeFils = 0, debtPaymentsFils = 0, commitmentsFils = 0, livingFils = 0 } = {}) {
+  const safe = (value) => validFils(value) ? value : 0;
+  const outflowFils = safe(debtPaymentsFils) + safe(commitmentsFils) + safe(livingFils);
+  const surplusFils = safe(incomeFils) - outflowFils;
+  return {
+    incomeFils: safe(incomeFils), debtPaymentsFils: safe(debtPaymentsFils), commitmentsFils: safe(commitmentsFils),
+    livingFils: safe(livingFils), outflowFils, surplusFils,
+    deficitFils: Math.max(-surplusFils, 0),
+    availableForGoalsFils: Math.max(surplusFils, 0)
+  };
+}
+
 export function endOfMonthForecast({
   availableCashFils = 0,
   transactions = [],
@@ -288,13 +403,20 @@ export function endOfMonthForecast({
 } = {}) {
   const bounds = monthBounds(todayISO);
   if (!bounds) return null;
-  const expenses = reviewedExpenses(transactions).filter((item) => item.date >= bounds.startISO && item.date <= todayISO && item.category !== "قسط");
+  const expenses = livingExpenses(transactions).filter((item) => item.date >= bounds.startISO && item.date <= todayISO);
   const actualSpentFils = expenses.reduce((sum, item) => sum + item.amountFils, 0);
   const distinctDays = new Set(expenses.map((item) => item.date)).size;
+  let basis = "current_month";
+  let averageDailyFils = Math.round(actualSpentFils / Math.max(bounds.dayOfMonth, 1));
   if (expenses.length < 3 || distinctDays < 2 || bounds.dayOfMonth < 3) {
-    return { sufficient: false, reason: "نحتاج مصروفات معتمدة من يومين مختلفين على الأقل قبل بناء توقع موثوق.", actualSpentFils };
+    // بيانات الشهر قليلة: نبدأ من متوسط آخر 3 أشهر مكتملة بدل «بيانات غير كافية»
+    const history = livingBaseline(transactions, todayISO, { months: 3 });
+    if (history.source !== "transactions") {
+      return { sufficient: false, reason: "نحتاج مصروفات معتمدة من يومين مختلفين على الأقل، أو 3 أشهر مكتملة، قبل بناء توقع موثوق.", actualSpentFils };
+    }
+    basis = "history";
+    averageDailyFils = Math.round(history.amountFils / bounds.daysInMonth);
   }
-  const averageDailyFils = Math.round(actualSpentFils / bounds.dayOfMonth);
   const daysRemaining = Math.max(bounds.daysInMonth - bounds.dayOfMonth, 0);
   const projectedSpendingFils = averageDailyFils * daysRemaining;
   const debtDue = debtOccurrences(debts, { fromISO: addDaysISO(todayISO, 1), toISO: bounds.endISO, payments: debtPayments }).filter((item) => !item.paid);
@@ -311,6 +433,7 @@ export function endOfMonthForecast({
     upcomingDebtFils,
     upcomingCommitmentsFils,
     forecastAvailableFils,
+    basis,
     label: "تقديري"
   };
 }
@@ -321,21 +444,22 @@ export function spendingComparison(transactions = [], todayISO) {
   const currentStart = toISO(new Date(today.getFullYear(), today.getMonth(), 1, 12));
   const previousStart = toISO(new Date(today.getFullYear(), today.getMonth() - 1, 1, 12));
   const previousEnd = toISO(clampedDate(today.getFullYear(), today.getMonth() - 1, today.getDate()));
-  const expenses = reviewedExpenses(transactions);
+  const expenses = livingExpenses(transactions);
   const currentFils = expenses.filter((item) => item.date >= currentStart && item.date <= todayISO).reduce((sum, item) => sum + item.amountFils, 0);
   const previousFils = expenses.filter((item) => item.date >= previousStart && item.date <= previousEnd).reduce((sum, item) => sum + item.amountFils, 0);
   return { currentFils, previousFils, differenceFils: currentFils - previousFils, percent: previousFils > 0 ? ((currentFils - previousFils) / previousFils) * 100 : null };
 }
 
+/* المتاح قد يكون سالباً، فنرجعه بإشارته بدل ما نعرض 0.000 ونخفي العجز. */
 export function financialFlow({ incomeFils = 0, debtPaymentsFils = 0, commitmentFils = 0, expensesFils = 0 } = {}) {
-  const availableFils = Math.max(incomeFils - debtPaymentsFils - commitmentFils - expensesFils, 0);
-  return { incomeFils, debtPaymentsFils, commitmentFils, expensesFils, availableFils };
+  const availableFils = incomeFils - debtPaymentsFils - commitmentFils - expensesFils;
+  return { incomeFils, debtPaymentsFils, commitmentFils, expensesFils, availableFils, shortfallFils: Math.max(-availableFils, 0) };
 }
 
 /** A cautious, deterministic starting allocation; the caller must provide a reviewed living-cost baseline. */
 export function createAdvisorAllocation({
   incomeFils = 0, debtInstallmentsFils = 0, commitmentsFils = 0, livingCostFils = 0,
-  cashFils = 0, totalDebtFils = 0, overdue = false, baselineReady = true
+  cashFils = 0, totalDebtFils = 0, overdue = false, baselineReady = true, emergencyGoalFils = 0
 } = {}) {
   const safe = (value) => Number.isSafeInteger(value) && value > 0 ? value : 0;
   const income = safe(incomeFils);
@@ -345,15 +469,17 @@ export function createAdvisorAllocation({
   const cash = safe(cashFils);
   const debt = safe(totalDebtFils);
   const essentialMonthlyFils = installments + commitments + living;
-  const surplusFils = income - essentialMonthlyFils;
+  const surplusFils = monthlySurplus({ incomeFils: income, debtPaymentsFils: installments, commitmentsFils: commitments, livingFils: living }).surplusFils;
+  // مرحلة 1: هدف صندوق الطوارئ المسجل (إذا موجود)، ومرحلة 2: 3 أشهر من الأساسيات
+  const stageOneTargetFils = safe(emergencyGoalFils) > 0 ? safe(emergencyGoalFils) : essentialMonthlyFils;
   const emergencyTargetFils = essentialMonthlyFils * 3;
-  const minimumReserveFils = essentialMonthlyFils;
+  const minimumReserveFils = Math.min(stageOneTargetFils, emergencyTargetFils || stageOneTargetFils);
   const result = {
     baselineReady: baselineReady && living > 0,
     incomeFils: income, debtInstallmentsFils: installments, commitmentsFils: commitments,
     livingCostFils: living, essentialMonthlyFils, surplusFils,
     deficitFils: Math.max(-surplusFils, 0), cashFils: cash,
-    minimumReserveFils, emergencyTargetFils,
+    minimumReserveFils, emergencyTargetFils, stageOneTargetFils,
     reserveGapFils: Math.max(emergencyTargetFils - cash, 0),
     reserveAllocationFils: 0, extraDebtFils: 0, investmentFils: 0,
     phase: "needs_data"
@@ -491,21 +617,28 @@ export function answerFinancialQuestion(question, context) {
   if (/كم.*(?:باقي|المتبقي).*(?:راتب|معاش)|كم باقي لي/.test(text)) {
     return actual("المتاح حتى الراتب", format(safe?.safeFils ?? 0), [`الرصيد الحالي: ${format(context.availableCashFils)}`, `المحجوز للالتزامات: ${format(safe?.committedFils ?? 0)}`]);
   }
+  // «كم صرفت هالشهر؟» سؤال عن الصرف الفعلي، ما هو عن المستحقات
+  if (/(?:صرفت|انصرف|تصرفت|مصروفي|صرفي)/.test(text) && /شهر/.test(text) && !/طاف|ماضي|سابق|مقارن/.test(text)) {
+    return actual("صرفت هذا الشهر", format(context.spentFils), [
+      `${countLabel(context.expenses.length, "transaction")} معتمدة بدون الأقساط`,
+      `المستحق الباقي هذا الشهر: ${format(context.monthDueFils)}`
+    ]);
+  }
   if (/(?:هذا|هال).*(?:أسبوع|اسبوع)|شنو علي.*أسبوع/.test(text)) {
     const due = context.weekDue;
-    return actual("المستحق خلال 7 أيام", format(due.totalFils), [`${due.debtCount} قسط`, `${due.commitmentCount} التزام ثابت`]);
+    return actual("المستحق خلال 7 أيام", format(due.totalFils), [`أقساط: ${countLabel(due.debtCount, "installment")}`, `التزامات ثابتة: ${countLabel(due.commitmentCount, "commitment")}`]);
   }
   if (/(?:هذا|هال).*(?:شهر)|شنو علي.*شهر/.test(text)) {
     return actual("المتبقي عليك هذا الشهر", format(context.monthDueFils), [`أقساط والتزامات غير مدفوعة حتى نهاية الشهر`]);
   }
-  if (/متى.*(?:أخلص|اخلص).*(?:دين|قرض)|صفر ديون/.test(text)) {
+  if (/متى.*(?:أخلص|اخلص).*(?:دين|ديون|ديوني|قرض|قروض)|صفر ديون/.test(text)) {
     return debts.zeroDebtDate
       ? estimate("الوصول المتوقع لصفر ديون", context.formatDate(debts.zeroDebtDate), ["الحساب يفترض استمرار الأقساط الحالية دون تعثر أو رسوم جديدة."])
       : estimate("موعد السداد غير متاح", "نحتاج رصيداً وقسطاً صحيحين لكل قرض لحساب الموعد.");
   }
   if (/أي.*قرض.*(?:أول|يخلص)|اي قرض/.test(text)) {
     const first = context.firstDebt;
-    return first ? estimate("أول قرض متوقع يخلص", first.name, [`بعد نحو ${first.months} شهر`]) : actual("ما عندك قرض نشط", "ما توجد بيانات قرض نشط حالياً.");
+    return first ? estimate("أول قرض متوقع يخلص", first.name, [`بعد نحو ${countLabel(first.months, "month")}`]) : actual("ما عندك قرض نشط", "ما توجد بيانات قرض نشط حالياً.");
   }
   if (/إذا.*دفعت|اذا.*دفعت|دفعة.*زيادة/.test(text)) {
     const amountMatch = text.match(/(\d[\d,]*(?:\.\d{1,3})?)/);
@@ -513,7 +646,7 @@ export function answerFinancialQuestion(question, context) {
     const debt = context.largestDebt;
     const simulation = debt && extraFils ? simulateExtraPayment(debt, extraFils, context.todayISO) : null;
     return simulation
-      ? estimate(`محاكاة دفعة على ${debt.name}`, `تختصر تقريباً ${simulation.monthsShortened} شهر`, [`الرصيد بعدها: ${format(simulation.afterBalanceFils)}`, `النهاية المتوقعة: ${context.formatDate(simulation.expectedEndDate)}`])
+      ? estimate(`محاكاة دفعة على ${debt.name}`, `تختصر تقريباً ${countLabel(simulation.monthsShortened, "month")}`, [`الرصيد بعدها: ${format(simulation.afterBalanceFils)}`, `النهاية المتوقعة: ${context.formatDate(simulation.expectedEndDate)}`])
       : recommendation("حدد مبلغ الدفعة", "اكتب مثال: إذا دفعت 500 د.ك زيادة شنو يصير؟");
   }
   if (/أعلى.*الشهر.*طاف|مقارن.*الشهر|صرفي.*الشهر/.test(text)) {

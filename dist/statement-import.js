@@ -1,6 +1,7 @@
 import { formatMoney, inferCategory, merchantDefaults, merchantKey, normalizeDigits, parseMoney } from "./finance-core.js";
 
-const excludedText = /\b(?:transfer|own account|between accounts|credit card payment|card payment|salary|refund|reversal)\b|تحويل|بين حساب|سداد بطاقة|تسديد بطاقة|راتب|استرداد|عكس قيد/i;
+// تحويلات داخلية ودفعات البطاقات: ما هي صرف جديد، والشراء نفسه يجي من كشف البطاقة
+const excludedText = /\b(?:transfer|own account|between accounts|credit card payment|card payment|salary|refund|reversal)\b|تحويل|بين حساب|سداد بطاقة|تسديد بطاقة|دفعة بطاقة|دفعه بطاقة|دفعة لبطاقة|دفعة (?:إلى|الى) بطاقة|تعبئة بطاقة|تعبئه بطاقة|بطاقة العملات|راتب|استرداد|عكس قيد/i;
 const debitType = /\b(?:debit|withdrawal|withdraw|purchase|payment|dr)\b|مدين|خصم|سحب|شراء|دفع/i;
 const creditType = /\b(?:credit|deposit|salary|refund|cr)\b|دائن|إيداع|ايداع|راتب|استرداد/i;
 
@@ -67,12 +68,15 @@ function parseDate(value) {
 
 function parseAmount(value) {
   let text = normalizeDigits(String(value ?? "")).trim();
-  if (!text || /^[-–—]+$/.test(text)) return { amountFils: 0, negative: false };
+  if (!text || /^[-–—]+$/.test(text)) return { amountFils: 0, negative: false, invalid: false };
   const negative = /^\s*[-−]/.test(text) || /^\s*\(/.test(text) || /(?:^|[^\d])[-−]\s*\d/.test(text);
   text = text.replace(/[()]/g, "").replace(/\b(?:KWD|KD)\b|د\.ك|دينار/gi, "").replace(/[+−-]/g, "").replaceAll("٫", ".").replaceAll("٬", "").trim();
-  const match = text.match(/\d[\d,]*(?:\.\d{1,3})?/);
-  const amountFils = match ? parseMoney(match[0]) : null;
-  return { amountFils: Number.isSafeInteger(amountFils) ? amountFils : 0, negative };
+  // أكثر من ٣ منازل عشرية ما ينقص بصمت: الصف يُرفض ويُعد غير مقروء
+  const match = text.match(/\d[\d,]*(?:\.\d+)?/);
+  if (!match) return { amountFils: 0, negative, invalid: false };
+  if (/\.\d{4,}/.test(match[0])) return { amountFils: 0, negative, invalid: true };
+  const amountFils = parseMoney(match[0]);
+  return { amountFils: Number.isSafeInteger(amountFils) ? amountFils : 0, negative, invalid: amountFils === null };
 }
 
 function monthStartISO(todayISO, monthsBack = 11) {
@@ -103,19 +107,71 @@ function parseOFXRows(text) {
   });
 }
 
-function buildCandidate({ date, description, amountFils, existingTransactions }) {
+/* مطابقة التاجر بدون ترتيب الكلمات: كشف PDF يعيد ترتيب أجزاء الوصف، فنقارن مجموعة الكلمات.
+   نسمح بكلمة ناقصة أو مقطوعة (الوصف يُقص عند ٨٠ حرفاً عند الحفظ). */
+function merchantTokens(text) {
+  return merchantKey(text).split(/\s+/).filter(Boolean);
+}
+
+export function sameMerchantWords(a, b) {
+  const first = merchantTokens(a);
+  const second = merchantTokens(b);
+  if (!first.length || !second.length) return false;
+  const counts = new Map();
+  for (const token of second) counts.set(token, (counts.get(token) ?? 0) + 1);
+  let shared = 0;
+  for (const token of first) {
+    const left = counts.get(token) ?? 0;
+    if (left > 0) { counts.set(token, left - 1); shared += 1; }
+  }
+  const longest = Math.max(first.length, second.length);
+  return shared >= Math.max(1, Math.ceil(longest * 0.7));
+}
+
+/* فهرس العمليات المحفوظة حسب التاريخ+المبلغ. كل عملية محفوظة تُطابق صفاً واحداً فقط،
+   فعمليتان حقيقيتان بنفس اليوم والمبلغ تبقى الثانية جديدة بدل ما تنشال كمكرر. */
+function existingIndex(existingTransactions = []) {
+  const map = new Map();
+  for (const item of existingTransactions) {
+    if (!item || item.kind === "income") continue;
+    const key = `${item.date}|${item.amountFils}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push({ item, used: false });
+  }
+  return map;
+}
+
+function matchExisting(index, { date, amountFils, balanceFils, rawMerchant }) {
+  const entries = index.get(`${date}|${amountFils}`);
+  if (!entries?.length) return "new";
+  const free = entries.filter((entry) => !entry.used);
+  const byBalance = balanceFils
+    ? free.find((entry) => entry.item.balanceAfterFils === balanceFils)
+    : null;
+  const match = byBalance ?? free.find((entry) => sameMerchantWords(entry.item.rawMerchant || entry.item.merchant, rawMerchant));
+  if (match) { match.used = true; return "duplicate"; }
+  // نفس التاريخ والمبلغ والرصيد بعد العملية = نفس الحركة، حتى لو الملف يذكرها مرتين
+  if (balanceFils && entries.some((entry) => entry.item.balanceAfterFils === balanceFils)) return "duplicate";
+  if (!free.length) return "new";
+  return "possible";
+}
+
+function buildCandidate({ date, description, amountFils, balanceFils, index }) {
   const merchantText = description.replace(/\s+/g, " ").trim().slice(0, 140);
   const learned = merchantDefaults(merchantText, inferCategory(merchantText));
   const merchant = learned.merchant || merchantText || "تاجر غير محدد";
   const rawMerchant = merchantText || merchant;
-  const fingerprint = `${date}|${amountFils}|${merchantKey(rawMerchant)}`;
-  const duplicate = existingTransactions.some((item) => {
-    const itemFingerprint = item.fingerprint || `${item.date}|${item.amountFils}|${merchantKey(item.rawMerchant || item.merchant)}`;
-    return itemFingerprint === fingerprint;
-  });
+  // الرصيد بعد العملية يميّز صفين بنفس اليوم والمبلغ (أعلى من ترتيب كلمات الوصف)
+  const fingerprint = balanceFils
+    ? `${date}|${amountFils}|bal:${balanceFils}`
+    : `${date}|${amountFils}|${merchantKey(rawMerchant)}`;
+  const verdict = matchExisting(index, { date, amountFils, balanceFils, rawMerchant });
   return {
     date, amountFils, merchant, rawMerchant, category: learned.category || "أخرى", kind: "expense",
-    reviewed: true, source: "bank-statement", fingerprint, duplicate
+    reviewed: true, source: "bank-statement", fingerprint,
+    balanceAfterFils: balanceFils || null,
+    possibleDuplicate: verdict === "possible",
+    duplicate: verdict === "duplicate"
   };
 }
 
@@ -126,7 +182,7 @@ export function parseBankStatement({ text, filename = "statement.csv", todayISO,
   if (text.length > 12_000_000) throw new Error("حجم الكشف أكبر من الحد المسموح (12 ميغابايت).");
 
   const extension = filename.toLowerCase().split(".").pop();
-  let rows, dateIndex, descriptionIndex, amountIndex, debitIndex, creditIndex, typeIndex, memoIndex;
+  let rows, dateIndex, descriptionIndex, amountIndex, debitIndex, creditIndex, typeIndex, memoIndex, balanceIndex = -1;
   if (["ofx", "qfx"].includes(extension)) {
     rows = parseOFXRows(text);
     dateIndex = 0; descriptionIndex = 1; amountIndex = 2; typeIndex = 3; memoIndex = 4;
@@ -152,6 +208,7 @@ export function parseBankStatement({ text, filename = "statement.csv", todayISO,
         dateIndex = date; descriptionIndex = description; amountIndex = amount; debitIndex = debit; creditIndex = credit;
         typeIndex = headerIndex(headers, typeAliases);
         memoIndex = headerIndex(headers, ["memo", "reference", "ملاحظات", "مرجع"]);
+        balanceIndex = headerIndex(headers, ["balance", "running balance", "closing balance", "الرصيد", "الرصيد بعد العملية", "رصيد"]);
         break;
       }
     }
@@ -162,9 +219,10 @@ export function parseBankStatement({ text, filename = "statement.csv", todayISO,
   }
 
   const cutoffISO = monthStartISO(todayISO, 11);
-  const totals = { sourceRows: rows.length, invalidRows: 0, outOfRange: 0, credits: 0, transfers: 0, duplicates: 0 };
+  const totals = { sourceRows: rows.length, invalidRows: 0, outOfRange: 0, credits: 0, transfers: 0, transfersFils: 0, duplicates: 0, possibleDuplicates: 0 };
   const candidates = [];
   const seen = new Set();
+  const index = existingIndex(existingTransactions);
   for (const row of rows.slice(0, maxRows)) {
     const date = parseDate(row[dateIndex]);
     const description = [row[descriptionIndex], memoIndex >= 0 ? row[memoIndex] : ""].filter(Boolean).join(" ").trim();
@@ -174,28 +232,36 @@ export function parseBankStatement({ text, filename = "statement.csv", todayISO,
     let amountFils = 0;
     let isDebit = false;
     let isCredit = false;
+    let invalidAmount = false;
     if (debitIndex >= 0 || creditIndex >= 0) {
-      const debit = debitIndex >= 0 ? parseAmount(row[debitIndex]).amountFils : 0;
-      const credit = creditIndex >= 0 ? parseAmount(row[creditIndex]).amountFils : 0;
+      const debitValue = debitIndex >= 0 ? parseAmount(row[debitIndex]) : { amountFils: 0 };
+      const creditValue = creditIndex >= 0 ? parseAmount(row[creditIndex]) : { amountFils: 0 };
+      invalidAmount = Boolean(debitValue.invalid || creditValue.invalid);
+      const debit = debitValue.amountFils;
+      const credit = creditValue.amountFils;
       if (debit > 0 && credit > 0) { totals.invalidRows += 1; continue; }
       if (debit > 0) { amountFils = debit; isDebit = true; }
       else if (credit > 0) { amountFils = credit; isCredit = true; }
     }
     if (!amountFils && amountIndex >= 0) {
       const parsed = parseAmount(row[amountIndex]);
+      invalidAmount = invalidAmount || Boolean(parsed.invalid);
       amountFils = parsed.amountFils;
       isDebit = parsed.negative || debitType.test(String(row[typeIndex] ?? ""));
       isCredit = creditType.test(String(row[typeIndex] ?? ""));
     }
-    if (!amountFils) { totals.invalidRows += 1; continue; }
+    if (invalidAmount || !amountFils) { totals.invalidRows += 1; continue; }
     if (isCredit && !isDebit) { totals.credits += 1; continue; }
     if (!isDebit) { totals.invalidRows += 1; continue; }
-    if (excludedText.test(description)) { totals.transfers += 1; continue; }
+    // دفعات البطاقة والتحويلات مستبعدة من الصرف، ونجمع مبلغها حتى تبين بالمعاينة (F2)
+    if (excludedText.test(description)) { totals.transfers += 1; totals.transfersFils += amountFils; continue; }
 
-    const candidate = buildCandidate({ date, description, amountFils, existingTransactions });
+    const balanceFils = balanceIndex >= 0 ? parseAmount(row[balanceIndex]).amountFils : 0;
+    const candidate = buildCandidate({ date, description, amountFils, balanceFils, index });
     if (candidate.duplicate || seen.has(candidate.fingerprint)) { totals.duplicates += 1; continue; }
     seen.add(candidate.fingerprint);
     delete candidate.duplicate;
+    if (candidate.possibleDuplicate) totals.possibleDuplicates += 1;
     candidates.push(candidate);
   }
   if (rows.length > maxRows) totals.invalidRows += rows.length - maxRows;
@@ -209,6 +275,7 @@ export function parseBankStatement({ text, filename = "statement.csv", todayISO,
       totalFils: candidates.reduce((sum, item) => sum + item.amountFils, 0),
       startDate: candidates[0]?.date ?? "",
       endDate: candidates.at(-1)?.date ?? "",
+      hasBalanceColumn: balanceIndex >= 0,
       cutoffISO
     }
   };
@@ -269,41 +336,49 @@ export function analyzeSpendingBehavior(transactions = [], { todayISO, salaryDay
   }
 
   const totalFils = expenses.reduce((sum, item) => sum + item.amountFils, 0);
-  const activeMonths = [...monthTotals.values()].filter((amount) => amount > 0).length;
+  // الشهر الحالي ناقص: ما يدخل بالمتوسط ولا بمقارنة آخر 3 أشهر حتى ما نقول «انخفض» وهو ما خلص
+  const [todayYear, todayMonth, todayDay] = todayISO.split("-").map(Number);
+  const partialMonthKey = todayDay === new Date(todayYear, todayMonth, 0, 12).getDate() ? null : monthKey(todayISO);
+  const completeKeys = monthKeys.filter((key) => key !== partialMonthKey);
+  const completeTotalFils = completeKeys.reduce((sum, key) => sum + (monthTotals.get(key) ?? 0), 0);
+  const activeMonths = completeKeys.filter((key) => (monthTotals.get(key) ?? 0) > 0).length;
   const categories = [...categoryTotals.entries()].map(([name, amountFils]) => ({ name, amountFils, sharePercent: totalFils ? amountFils / totalFils * 100 : 0 })).sort((a, b) => b.amountFils - a.amountFils);
   const merchants = [...merchantMonths.values()].map((item) => ({
     merchant: item.merchant, months: item.months.size, count: item.count, totalFils: item.totalFils,
     averagePerRecordedMonthFils: Math.round(item.totalFils / item.months.size),
     repeatedAmount: item.amounts.length >= 3 && Math.max(...item.amounts) - Math.min(...item.amounts) <= Math.max(...item.amounts) * 0.08
   })).filter((item) => item.months >= 3 && item.count >= 3).sort((a, b) => b.totalFils - a.totalFils).slice(0, 5);
-  const monthly = monthKeys.map((key) => ({ month: key, label: monthLabel(key), totalFils: monthTotals.get(key) ?? 0 }));
-  const peakMonth = [...monthly].sort((a, b) => b.totalFils - a.totalFils)[0] ?? null;
-  const recent3 = monthly.slice(-3).reduce((sum, item) => sum + item.totalFils, 0);
-  const previous3 = monthly.slice(-6, -3).reduce((sum, item) => sum + item.totalFils, 0);
+  const monthly = monthKeys.map((key) => ({ month: key, label: monthLabel(key), totalFils: monthTotals.get(key) ?? 0, partial: key === partialMonthKey }));
+  const peakMonth = [...monthly].filter((item) => !item.partial).sort((a, b) => b.totalFils - a.totalFils)[0] ?? null;
+  const completeMonthly = monthly.filter((item) => !item.partial);
+  const recent3 = completeMonthly.slice(-3).reduce((sum, item) => sum + item.totalFils, 0);
+  const previous3 = completeMonthly.slice(-6, -3).reduce((sum, item) => sum + item.totalFils, 0);
   const trendPercent = previous3 > 0 ? ((recent3 - previous3) / previous3) * 100 : null;
   const categoryChanges = [...categoryMonths.entries()].map(([name, totals]) => {
-    const previous = monthly.slice(-6, -3).reduce((sum, item) => sum + (totals.get(item.month) ?? 0), 0);
-    const recent = monthly.slice(-3).reduce((sum, item) => sum + (totals.get(item.month) ?? 0), 0);
+    const previous = completeMonthly.slice(-6, -3).reduce((sum, item) => sum + (totals.get(item.month) ?? 0), 0);
+    const recent = completeMonthly.slice(-3).reduce((sum, item) => sum + (totals.get(item.month) ?? 0), 0);
     const previousAverageFils = Math.round(previous / 3);
     const recentAverageFils = Math.round(recent / 3);
     return { name, previousAverageFils, recentAverageFils, changePercent: previous > 0 ? (recent - previous) / previous * 100 : null };
   }).filter((item) => item.changePercent >= 25 && item.previousAverageFils >= 10_000 && item.recentAverageFils >= 20_000)
     .sort((a, b) => b.changePercent - a.changePercent).slice(0, 3);
   const firstWeekPercent = totalFils ? payCycleTotals.firstWeek / totalFils * 100 : 0;
-  const peakShare = peakMonth && totalFils ? peakMonth.totalFils / totalFils * 100 : 0;
+  const peakShare = peakMonth && completeTotalFils ? peakMonth.totalFils / completeTotalFils * 100 : 0;
   const recordedDates = expenses.map((item) => item.date).sort();
   const insights = [];
   if (categories[0]) insights.push(`أكبر فئة مسجلة: ${categories[0].name}، وتمثل ${Math.round(categories[0].sharePercent).toLocaleString("ar-KW-u-nu-latn")}٪ من المصروفات المحللة.`);
   if (peakMonth && peakShare >= 12) insights.push(`أعلى شهر صرف مسجل: ${peakMonth.label} بإجمالي ${formatMoney(peakMonth.totalFils)}.`);
   if (trendPercent !== null && activeMonths >= 6) {
     const direction = trendPercent > 5 ? "ارتفع" : trendPercent < -5 ? "انخفض" : "بقي قريباً من";
-    insights.push(`إجمالي آخر 3 أشهر ${direction} ${Math.abs(Math.round(trendPercent)).toLocaleString("ar-KW-u-nu-latn")}٪ مقارنة بالثلاثة السابقة.`);
+    insights.push(`إجمالي آخر 3 أشهر مكتملة ${direction} ${Math.abs(Math.round(trendPercent)).toLocaleString("ar-KW-u-nu-latn")}٪ مقارنة بالثلاثة السابقة (${formatMoney(recent3)} مقابل ${formatMoney(previous3)}).`);
   }
+  if (partialMonthKey) insights.push(`شهر ${monthLabel(partialMonthKey)} ما خلص، فما دخل في المتوسط ولا بالمقارنة.`);
   if (firstWeekPercent >= 30) insights.push(`حوالي ${Math.round(firstWeekPercent).toLocaleString("ar-KW-u-nu-latn")}٪ من الصرف وقع في أول 7 أيام بعد يوم الراتب المحدد.`);
   if (categoryChanges[0]) insights.push(`صرف ${categoryChanges[0].name} ارتفع ${Math.round(categoryChanges[0].changePercent).toLocaleString("ar-KW-u-nu-latn")}٪ في آخر 3 أشهر مقارنة بالثلاثة السابقة.`);
   return {
     fromISO, toISO: todayISO, totalFils, count: expenses.length, activeMonths,
-    monthlyAverageFils: activeMonths ? Math.round(totalFils / activeMonths) : 0,
+    completeTotalFils, partialMonth: partialMonthKey, recent3Fils: recent3, previous3Fils: previous3,
+    monthlyAverageFils: activeMonths ? Math.round(completeTotalFils / activeMonths) : 0,
     recordedStartISO: recordedDates[0] ?? "", recordedEndISO: recordedDates.at(-1) ?? "",
     categories, categoryChanges, merchants, monthly, peakMonth, trendPercent, firstWeekPercent, insights
   };

@@ -1,4 +1,4 @@
-import { createId, formatMoney, normalizeDigits, parseMoney, todayISO } from "./finance-core.js";
+import { countLabel, createId, formatMoney, normalizeDigits, parseMoney, todayISO } from "./finance-core.js";
 
 // محفظة الذهب: كل الأسعار بالفلس لكل غرام ذهب صافي (عيار ٢٤)، والأوزان بالمليغرام.
 export const TROY_OUNCE_GRAMS = 31.1034768;
@@ -19,6 +19,15 @@ export function formatGrams(mg) {
 
 export function pureMg(purchase) {
   return Math.round(purchase.mg * purchase.karat / 24);
+}
+
+// بدون تقريب المليغرام قبل الضرب، حتى ما يختلف تقييم عيار 22 عن سعر العيار المعروض
+export function pureMgExact(purchase) {
+  return purchase.mg * purchase.karat / 24;
+}
+
+export function purchaseValueFils(purchase, fils24) {
+  return fils24 ? Math.round(purchase.mg * karatPrice(fils24, purchase.karat) / 1000) : null;
 }
 
 export function karatPrice(fils24, karat) {
@@ -54,8 +63,9 @@ export function goldSummary(purchases, fils24) {
   const paidFils = purchases.reduce((sum, item) => sum + item.paidFils, 0);
   const totalMg = purchases.reduce((sum, item) => sum + item.mg, 0);
   const pure = purchases.reduce((sum, item) => sum + pureMg(item), 0);
-  const avgCost24 = pure ? Math.round(paidFils * 1000 / pure) : null;
-  const valueFils = fils24 ? Math.round(pure * fils24 / 1000) : null;
+  const pureExact = purchases.reduce((sum, item) => sum + pureMgExact(item), 0);
+  const avgCost24 = pureExact ? Math.round(paidFils * 1000 / pureExact) : null;
+  const valueFils = fils24 ? purchases.reduce((sum, item) => sum + purchaseValueFils(item, fils24), 0) : null;
   const profitFils = valueFils === null ? null : valueFils - paidFils;
   return { paidFils, totalMg, pureMg: pure, avgCost24, valueFils, profitFils, profitPct: profitFils === null || !paidFils ? null : profitFils / paidFils * 100 };
 }
@@ -94,7 +104,7 @@ export function buySignal({ history, avgCost24, today = todayISO(), spreadPct = 
 }
 
 export function averageAfterBuy(purchases, buyMg, priceFils24) {
-  const pure = purchases.reduce((sum, item) => sum + pureMg(item), 0) + buyMg;
+  const pure = purchases.reduce((sum, item) => sum + pureMgExact(item), 0) + buyMg;
   const paid = purchases.reduce((sum, item) => sum + item.paidFils, 0) + Math.round(buyMg * priceFils24 / 1000);
   return pure ? Math.round(paid * 1000 / pure) : null;
 }
@@ -115,7 +125,7 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&
 const pct = (value) => `${value >= 0 ? "\u200E+" : "\u200E−"}${Math.abs(value).toLocaleString("ar-KW-u-nu-latn", { maximumFractionDigits: 1 })}٪`;
 const STATUS = {
   buy: ["ok", "منطقة شراء مناسبة", "السعر الحين تحت سعر الشراء المستهدف."],
-  near: ["warn", "قريب من منطقة الشراء", "السعر أعلى من المستهدف بأقل من ٢٪."],
+  near: ["warn", "قريب من منطقة الشراء", "السعر أعلى من المستهدف بأقل من 2٪."],
   wait: ["neutral", "انتظر", "السعر أعلى من المستهدف؛ الشراء الحين يرفع متوسط تكلفتك."],
   unknown: ["neutral", "نحتاج سعر", "حدّث السعر أو أدخله يدوياً."]
 };
@@ -146,7 +156,7 @@ export function mountGold(root, { getState, save, toast, fetchPrice }) {
         <div class="section-heading"><div><span class="eyebrow">${esc(updated)}</span><h2>سعر الغرام اليوم</h2></div><button type="button" class="primary small" data-gold="refresh" ${busy ? "disabled" : ""}>${busy ? "جاري التحديث…" : "تحديث السعر"}</button></div>
         <div class="gold-karats">${KARATS.map((k) => `<div><span>عيار ${k.toLocaleString("ar-KW-u-nu-latn")}</span><strong>${last ? esc(formatMoney(karatPrice(last.fils24, k))) : "—"}</strong></div>`).join("")}</div>
         <p class="hint">سعر السوق العالمي محوّل للدينار، بدون المصنعية. سعر المحل غالباً أعلى عند الشراء وأقل عند البيع.</p>
-        <form class="gold-manual" data-gold-form="price"><label class="field"><span>أو أدخل سعر غرام عيار ٢٤ بنفسك</span><div class="money-field"><input name="price" inputmode="decimal" placeholder="0.000"><b>د.ك</b></div></label><button type="submit" class="secondary">حفظ السعر</button></form>
+        <form class="gold-manual" data-gold-form="price"><label class="field"><span>أو أدخل سعر غرام عيار 24 بنفسك</span><div class="money-field"><input name="price" inputmode="decimal" placeholder="0.000"><b>د.ك</b></div></label><button type="submit" class="secondary">حفظ السعر</button></form>
       </section>
 
       <section class="panel">
@@ -155,7 +165,7 @@ export function mountGold(root, { getState, save, toast, fetchPrice }) {
           <article class="metric"><span>دفعت</span><strong>${esc(formatMoney(summary.paidFils))}</strong></article>
           <article class="metric"><span>قيمته بسعر اليوم</span><strong>${summary.valueFils === null ? "—" : esc(formatMoney(summary.valueFils))}</strong></article>
           <article class="metric"><span>الربح أو الخسارة</span><strong class="${summary.profitFils < 0 ? "negative" : "positive"}">${summary.profitFils === null ? "—" : `${esc(formatMoney(summary.profitFils))} (${esc(pct(summary.profitPct))})`}</strong></article>
-          <article class="metric"><span>متوسط تكلفتك لغرام ٢٤</span><strong>${summary.avgCost24 ? esc(formatMoney(summary.avgCost24)) : "—"}</strong></article>
+          <article class="metric"><span>متوسط تكلفتك لغرام 24</span><strong>${summary.avgCost24 ? esc(formatMoney(summary.avgCost24)) : "—"}</strong></article>
         </div>
       </section>
 
@@ -163,14 +173,14 @@ export function mountGold(root, { getState, save, toast, fetchPrice }) {
         <div class="section-heading"><div><span class="eyebrow">مؤشر من الأسعار المسجلة</span><h2>متى الشراء القادم؟</h2></div><span class="status-badge ${tone}">${esc(label)}</span></div>
         <p>${esc(hint)}</p>
         <div class="metric-grid">
-          <article class="metric"><span>اشترِ إذا نزل غرام ٢٤ إلى</span><strong>${signal.target ? esc(formatMoney(signal.target)) : "—"}</strong></article>
+          <article class="metric"><span>اشترِ إذا نزل غرام 24 إلى</span><strong>${signal.target ? esc(formatMoney(signal.target)) : "—"}</strong></article>
           <article class="metric"><span>تربح إذا بعت فوق</span><strong>${signal.profitPrice ? esc(formatMoney(signal.profitPrice)) : "—"}</strong></article>
         </div>
         <ul class="gold-basis">
-          ${summary.avgCost24 ? `<li>متوسط تكلفتك ${esc(formatMoney(summary.avgCost24))}؛ الشراء تحته بـ٣٪ ينزّل المتوسط.</li>` : ""}
-          ${signal.month ? `<li>آخر ٣٠ يوم: متوسط ${esc(formatMoney(signal.month.avg))} · أعلى ${esc(formatMoney(signal.month.high))} · أدنى ${esc(formatMoney(signal.month.low))} (${signal.month.count.toLocaleString("ar-KW-u-nu-latn")} سعر).</li>` : ""}
+          ${summary.avgCost24 ? `<li>متوسط تكلفتك ${esc(formatMoney(summary.avgCost24))}؛ الشراء تحته بـ3٪ ينزّل المتوسط.</li>` : ""}
+          ${signal.month ? `<li>آخر 30 يوم: متوسط ${esc(formatMoney(signal.month.avg))} · أعلى ${esc(formatMoney(signal.month.high))} · أدنى ${esc(formatMoney(signal.month.low))} (${countLabel(signal.month.count, "price")}).</li>` : ""}
           ${signal.gapPct !== null ? `<li>السعر الحالي ${esc(pct(signal.gapPct))} عن المستهدف.</li>` : ""}
-          ${after ? `<li>لو اشتريت ١٠ غرام عيار ٢٤ بالسعر المستهدف، يصير متوسطك ${esc(formatMoney(after))}.</li>` : ""}
+          ${after ? `<li>لو اشتريت 10 غرام عيار 24 بالسعر المستهدف، يصير متوسطك ${esc(formatMoney(after))}.</li>` : ""}
           <li>سعر الربح = متوسطك + ${Number(ui.goldSpreadPct).toLocaleString("ar-KW-u-nu-latn")}٪ فرق بيع المحل.</li>
           ${signal.learning ? "<li>البيانات قليلة: حدّث السعر يومياً عشان المؤشر يصير أدق.</li>" : ""}
         </ul>
@@ -220,7 +230,7 @@ export function mountGold(root, { getState, save, toast, fetchPrice }) {
   root.addEventListener("change", (event) => {
     if (!event.target.matches("[data-gold-spread]")) return;
     const value = Number(normalizeDigits(event.target.value).replace("٫", "."));
-    if (!Number.isFinite(value) || value < 0 || value > 20) { toast("اكتب نسبة من ٠ إلى ٢٠"); render(); return; }
+    if (!Number.isFinite(value) || value < 0 || value > 20) { toast("اكتب نسبة من 0 إلى 20"); render(); return; }
     getState().ui.goldSpreadPct = value; save(); render();
   });
   root.addEventListener("submit", (event) => {

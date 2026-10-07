@@ -13,13 +13,20 @@ export function normalizeDigits(value = "") {
   return [...String(value)].map((character) => ARABIC_DIGITS.get(character) ?? character).join("");
 }
 
+/* الفاصلة: فاصل آلاف فقط بنمط 1,234,567 — وإذا بعدها رقم أو رقمين فهي عشرية («12,5» = 12.500).
+   أي استخدام ثاني للفاصلة يُرفض بدل ما يتحول لرقم مختلف بصمت. */
 export function parseMoney(value) {
-  const normalized = normalizeDigits(value)
+  let normalized = normalizeDigits(value)
     .trim()
     .replaceAll("٫", ".")
-    .replaceAll("٬", "")
-    .replaceAll(",", "")
+    .replaceAll("٬", ",")
+    .replace(/[‎‏؜]/g, "")
     .replace(/\s+/g, "");
+
+  if (/^\d{1,3}(?:,\d{3})+(?:\.\d{1,3})?$/.test(normalized)) normalized = normalized.replaceAll(",", "");
+  else if (/^\d+,\d{1,2}$/.test(normalized)) normalized = normalized.replace(",", ".");
+  if (/^\d+\.$/.test(normalized)) normalized = normalized.slice(0, -1);
+  if (/^\.\d{1,3}$/.test(normalized)) normalized = `0${normalized}`; // «.5» = نص دينار (F33)
 
   if (!/^\d+(?:\.\d{1,3})?$/.test(normalized)) return null;
   const [whole, fraction = ""] = normalized.split(".");
@@ -27,6 +34,60 @@ export function parseMoney(value) {
   if (!Number.isSafeInteger(wholeNumber) || wholeNumber > 1_000_000_000) return null;
   const fils = wholeNumber * 1000 + Number(fraction.padEnd(3, "0"));
   return Number.isSafeInteger(fils) ? fils : null;
+}
+
+/* عدد صحيح من خانة نصية: يقبل الأرقام العربية وفواصل الآلاف، ويرجع null إذا ما انفهم. */
+export function parseCount(value, { min = 0, max = 1_000_000 } = {}) {
+  const text = normalizeDigits(value).trim().replaceAll("٬", "").replaceAll(",", "").replace(/[‎‏؜]/g, "");
+  if (!/^\d+$/.test(text)) return null;
+  const number = Number(text);
+  return Number.isSafeInteger(number) && number >= min && number <= max ? number : null;
+}
+
+/* نسبة مئوية من خانة نصية: تقبل الأرقام العربية والفاصلة العربية، وأي كسر (3.3 مثلاً) بدون خطوات ثابتة. */
+export function parseRate(value, { min = 0, max = 100 } = {}) {
+  const text = normalizeDigits(value).trim().replaceAll("٫", ".").replaceAll("٬", "").replaceAll(",", "")
+    .replace(/[‎‏؜٪%]/g, "").replace(/\s+/g, "");
+  if (!/^-?\d+(?:\.\d{1,4})?$/.test(text)) return null;
+  const number = Number(text);
+  return Number.isFinite(number) && number >= min && number <= max ? number : null;
+}
+
+/* قص آمن بالأحرف المرئية حتى لا ينكسر الإيموجي (نصف محرف) عند الحد. */
+export function cutText(value = "", limit = 80) {
+  const characters = [...String(value)];
+  return characters.length <= limit ? String(value) : characters.slice(0, limit).join("");
+}
+
+const pluralRules = new Intl.PluralRules("ar");
+const PLURAL_FORMS = {
+  transaction: { zero: "عمليات", one: "عملية", two: "عمليتان", few: "عمليات", many: "عملية", other: "عملية" },
+  month: { zero: "أشهر", one: "شهر", two: "شهران", few: "أشهر", many: "شهر", other: "شهر" },
+  year: { zero: "سنوات", one: "سنة", two: "سنتان", few: "سنوات", many: "سنة", other: "سنة" },
+  day: { zero: "أيام", one: "يوم", two: "يومان", few: "أيام", many: "يوم", other: "يوم" },
+  commitment: { zero: "التزامات", one: "التزام", two: "التزامان", few: "التزامات", many: "التزاماً", other: "التزام" },
+  installment: { zero: "أقساط", one: "قسط", two: "قسطان", few: "أقساط", many: "قسطاً", other: "قسط" },
+  goal: { zero: "أهداف", one: "هدف", two: "هدفان", few: "أهداف", many: "هدفاً", other: "هدف" },
+  notification: { zero: "إشعارات", one: "إشعار", two: "إشعاران", few: "إشعارات", many: "إشعاراً", other: "إشعار" },
+  loan: { zero: "قروض", one: "قرض", two: "قرضان", few: "قروض", many: "قرضاً", other: "قرض" },
+  question: { zero: "أسئلة", one: "سؤال", two: "سؤالان", few: "أسئلة", many: "سؤالاً", other: "سؤال" },
+  stock: { zero: "أسهم", one: "سهم", two: "سهمان", few: "أسهم", many: "سهماً", other: "سهم" },
+  price: { zero: "أسعار", one: "سعر", two: "سعران", few: "أسعار", many: "سعراً", other: "سعر" }
+};
+
+export function pluralWord(count, unit) {
+  const forms = PLURAL_FORMS[unit];
+  if (!forms) return "";
+  return forms[pluralRules.select(count)] ?? forms.other;
+}
+
+/* «7 عمليات» و«1 عملية» و«11 عملية» — صيغة الجمع العربية مع أرقام لاتينية.
+   المثنى يحمل العدد في صيغته، فـ«2 عمليتان» خطأ نحوي: نكتب «عمليتان» بلا رقم. */
+export function countLabel(count, unit) {
+  const number = Number(count) || 0;
+  const word = pluralWord(number, unit);
+  if (pluralRules.select(number) === "two" && word) return word;
+  return `${number.toLocaleString("ar-KW-u-nu-latn")} ${word}`.trim();
 }
 
 export function moneyInput(fils = 0) {
@@ -182,6 +243,17 @@ export function merchantKey(value = "") {
     .slice(0, 80);
 }
 
+/* مفاتيح عامة تظهر في كل إشعار تقريباً: لو تعلّمناها، كل عملية قادمة تنقلب لنفس الاسم (F28). */
+const GENERIC_MERCHANT_KEYS = /^(?:utap|u tap|tap|knet|k net|pos|payment|purchase|visa|mastercard|master|transfer|نقاط بيع|نقاط البيع|دفعة|دفع|شراء|سحب|تحويل|بطاقة|حساب|بنك|boubyan|بوبيان)$/i;
+// وصف مكوّن من كلمات عامة فقط («كي نت نقاط بيع UTap») ما يحدد تاجراً
+const GENERIC_MERCHANT_TOKENS = new Set(["utap", "u", "tap", "knet", "k", "net", "كي", "نت", "pos", "نقاط", "بيع", "البيع", "payment", "purchase",
+  "visa", "mastercard", "master", "transfer", "card", "debit", "credit", "prepaid", "multi", "currency", "دفعة", "دفع", "شراء", "سحب", "تحويل",
+  "بطاقة", "حساب", "بنك", "boubyan", "بوبيان", "خصم", "من", "في", "عبر", "باستخدام", "بجهاز", "جهاز", "عملية", "مشتريات"]);
+export function genericMerchantKey(key) {
+  const text = String(key ?? "").trim();
+  if (!text || text.length < 3 || GENERIC_MERCHANT_KEYS.test(text)) return true;
+  return text.split(/\s+/).every((token) => GENERIC_MERCHANT_TOKENS.has(token) || /^\d+$/.test(token));
+}
 export function merchantDefaults(raw = "", fallbackCategory = "أخرى") {
   const key = merchantKey(raw);
   const known = [

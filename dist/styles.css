@@ -187,6 +187,7 @@ main { width: min(100%, 1040px); margin: 0 auto; padding: 22px 18px calc(110px +
 .behavior-repeat-row > strong { text-align: left; color: var(--text-strong); white-space: nowrap; }
 .behavior-repeat-row small { color: var(--muted); font-size: .74rem; font-weight: 500; }
 .behavior-repeat-row .behavior-change { color: var(--danger); }
+.amount-negative { color: var(--danger); }
 .statement-import-button { width: 100%; margin: -4px 0 14px; min-height: 48px; border-color: #b7c4f4; background: var(--c-blue-soft); }
 .statement-import-preview { padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: #f8f9fd; }
 .statement-import-preview h3 { margin: 3px 0 0; font-size: 1rem; }
@@ -812,3 +813,63 @@ h1, h2, h3 { letter-spacing: 0; }
   .progress, .behavior-month-bar { background: var(--c-soft); }
   .bottom-nav button.active { color: #9db7ff; }
 }
+
+/* ===== إصلاحات 7 أكتوبر 2026 ===== */
+
+/* F34: النوافذ اللي ما فيها <form> كانت بحشو صفر، فالعنوان والأزرار يلزقون بالحافة */
+#more-dialog, #confirm-dialog, #portfolio-import-dialog, #onboarding-dialog { padding: 21px; }
+/* الـ grid للمفتوحة بس: على المقفلة كان يلغي display:none فتطلع النافذتان آخر كل صفحة */
+#confirm-dialog[open], #portfolio-import-dialog[open] { display: grid; gap: 14px; }
+
+/* F58: أي زر يلمسه الإصبع يصير 44 نقطة على الأقل (توصية آبل) */
+.primary, .secondary, .danger, .ghost { min-height: 44px; }
+button.small, .small.primary, .small.secondary, .small.danger, .small.ghost, .file-button.small { min-height: 44px; padding: 8px 12px; }
+.item-actions button, .pending-inbox-actions button, .question-chips button, .remove-scan { min-height: 44px; }
+.close-dialog { width: 44px; height: 44px; }
+
+/* F41: الاسم الطويل ما يمدّ البطاقة ولا يزحف فوق المبلغ */
+.card-head, .card-head > div, .transaction-main, .pending-inbox-item > div { min-width: 0; }
+.card-head h3, .transaction-main strong, .pending-inbox-item strong { overflow-wrap: anywhere; }
+.upcoming-strip, .upcoming-strip > * { min-width: 0; }
+.upcoming-strip strong, .upcoming-strip p, .data-card .detail strong, .data-card .card-summary-grid strong { overflow-wrap: anywhere; }
+.item-actions { flex-wrap: wrap; }
+.financial-alert strong, .financial-alert small, .sp-line > * { min-width: 0; overflow-wrap: anywhere; }
+
+/* F11: تحذير دائم إذا فشل الحفظ على الجهاز */
+.notice.danger { color: var(--danger); background: var(--c-danger-soft); border-color: var(--c-danger-line); }
+.storage-warning { display: grid; gap: 10px; }
+
+/* F7: معاينة «= X د.ك» تحت خانة الدينار */
+.money-preview { display: block; margin-top: 4px; color: var(--muted); font-size: .72rem; font-variant-numeric: tabular-nums; }
+.money-preview.is-bad { color: var(--danger); }
+
+/* F22: اللايت بوكس صار <dialog> عشان يطلع فوق النافذة المفتوحة */
+dialog.image-lightbox { inset: 0; width: 100vw; max-width: 100vw; height: 100%; max-height: 100%; margin: 0; padding: 54px 14px 20px; border-radius: 0; background: rgba(0,25,22,.92); box-shadow: none; }
+dialog.image-lightbox::backdrop { background: rgba(0,25,22,.92); backdrop-filter: blur(9px); }
+dialog.image-lightbox:not([open]) { display: none; }
+
+/* F10: مسودة إشعار تحتاج مبلغاً بالدينار من المستخدم */
+.bank-draft { display: grid; gap: 8px; padding: 12px; border: 1px dashed var(--c-warn-line); border-radius: 14px; background: var(--c-warn-soft); }
+.bank-draft p { margin: 0; overflow-wrap: anywhere; font-size: .78rem; line-height: 1.6; }
+.bank-draft .row { flex-wrap: wrap; }
+
+/* توست مع زر «تراجع» (F11 · F31 · F58) */
+.toast.has-action { display: flex; align-items: center; gap: 12px; pointer-events: auto; }
+.toast-undo { min-height: 44px; padding: 5px 12px; border: 1px solid rgba(255,255,255,.4); border-radius: 11px; color: white; background: transparent; font-weight: 800; }
+
+/* F48: تضبيب المحتوى عند الخروج من التطبيق إذا كان القفل مفعّلاً */
+body.is-private #app-main, body.is-private .bottom-nav, body.is-private .app-header, body.is-private dialog[open] { filter: blur(16px); }
+
+/* F32: تحذير التكرار في معاينة اللصق */
+.preview-dup { color: var(--danger); }
+.icon-button { min-width: 44px; min-height: 44px; }
+
+/* F4 · F5: العجز الشهري بخانة حمراء فاتحة بدل الأحمر فوق الأزرق (يبقى واضحاً بالوضعين) */
+.cashflow-steps div.available.is-deficit { color: var(--c-danger-ink); border-color: var(--c-danger-line); background: var(--c-danger-soft); }
+.cashflow-steps .available.is-deficit span, .cashflow-steps .available.is-deficit strong.amount-negative { color: var(--c-danger-ink); }
+
+/* رسائل التأكيد فيها «قبل ← بعد» بأسطر منفصلة (F27 · F31 · F39) */
+.confirm-message { white-space: pre-line; overflow-wrap: anywhere; }
+
+/* F33: الخانة اللي فيها الخطأ */
+input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 2px var(--c-danger-soft); }

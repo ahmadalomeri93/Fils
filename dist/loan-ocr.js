@@ -183,3 +183,18 @@ export function parseLoanOCRLoans(rawText, startIndex = 0) {
     };
   });
 }
+
+/* F20: القراءة من صورة ممكن تطلع رقم ناقص («8.000» بدل «12,345.678»). ما نغيّر الرقم،
+   بس ما نكتب «مقروء» جنب رقم غير منطقي: مبلغ أقل من 10 د.ك، أو قسط أكبر من الرصيد. */
+export function scanAmountWarnings(loan = {}) {
+  const warnings = {};
+  const tooSmall = (fils) => Number.isInteger(fils) && fils > 0 && fils < 10_000;
+  for (const [field, key] of [["original", "originalAmountFils"], ["balance", "balanceFils"], ["installment", "installmentFils"]]) {
+    if (tooSmall(loan[key])) warnings[field] = "رقم صغير — طابقه مع الصورة";
+  }
+  if (Number.isInteger(loan.balanceFils) && loan.balanceFils > 0 && Number.isInteger(loan.installmentFils) && loan.installmentFils > loan.balanceFils) {
+    warnings.installment = "القسط أكبر من الرصيد — طابقه مع الصورة";
+    warnings.balance ??= "أقل من القسط — طابقه مع الصورة";
+  }
+  return warnings;
+}

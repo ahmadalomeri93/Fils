@@ -1,4 +1,4 @@
-import { categories, formatMoney, moneyInput, parseMoney } from "./finance-core.js";
+import { categories, countLabel, formatMoney, moneyInput, parseMoney } from "./finance-core.js";
 
 export const EXPENSE_CATEGORIES = categories.filter((category) => category !== "راتب");
 export const MATERIAL_THRESHOLD = 0.1;
@@ -225,8 +225,8 @@ export function mountSpending(root, { getModel, onBudgetsChange }) {
         <div class="sp-edit">${EXPENSE_CATEGORIES.map((category) => `
           <label class="field"><span>${esc(category)}</span><div class="money-field"><input inputmode="decimal" data-budget-cat="${esc(category)}" value="${model.budgets[category] ? esc(moneyInput(model.budgets[category])) : ""}" placeholder="بدون"><b>د.ك</b></div></label>`).join("")}</div>
         ${overallBudget > 0 && sumBudgets > overallBudget ? `<p class="hint warn-hint">⚠ مجموع ميزانيات الفئات ${esc(formatMoney(sumBudgets))} أكبر من ميزانية الشهر الإجمالية ${esc(formatMoney(overallBudget))}.</p>` : ""}
-        <div class="row wrap"><button type="button" class="secondary" data-suggest ${suggestion ? "" : "disabled"}>اقترح من متوسط آخر ${suggestion ? num(suggestion.monthsUsed) : "٣"} شهور</button></div>
-        <p class="hint">${suggestion ? "الاقتراح يعبّي الفئات الفاضية فقط ويقرّب لأقرب ٥ دنانير." : "الاقتراح يحتاج شهراً كاملاً سابقاً فيه عمليات معتمدة."}</p>
+        <div class="row wrap"><button type="button" class="secondary" data-suggest ${suggestion ? "" : "disabled"}>${suggestion ? `اقترح من متوسط آخر ${countLabel(suggestion.monthsUsed, "month")}` : "اقترح من متوسط آخر 3 أشهر"}</button></div>
+        <p class="hint">${suggestion ? "الاقتراح يعبّي الفئات الفاضية فقط ويقرّب لأقرب 5 دنانير." : "الاقتراح يحتاج شهراً كاملاً سابقاً فيه عمليات معتمدة."}</p>
       </section>
 
       ${flagged.length ? `<section class="panel"><div class="section-heading"><div><span class="eyebrow">فروقات تستحق نظرة</span><h2>ليش تغيّر؟</h2></div></div>

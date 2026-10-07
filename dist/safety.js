@@ -1,7 +1,11 @@
 /* حماية البيانات: قفل بالرمز + تذكير النسخ الاحتياطي.
    القفل يمنع فتح الواجهة فقط؛ لا يشفّر البيانات المخزنة في المتصفح. */
 
+import { normalizeDigits, countLabel } from "./finance-core.js";
+
 export const PIN_PATTERN = /^\d{4,8}$/;
+/* لوحة المفاتيح العربية ترسل ٠١٢٣: نوحّد الأرقام قبل أي فحص حتى يُقبل الرمز نفسه مكتوباً بأي خط (F36). */
+export const normalizePin = (pin) => normalizeDigits(String(pin ?? "")).replace(/[\s‎‏؜]/g, "");
 export const LOCK_GRACE_MS = 30_000;
 export const BACKUP_INTERVAL_DAYS = 7;
 const DEFAULT_ITERATIONS = 150_000;
@@ -19,17 +23,19 @@ export function cryptoAvailable(cryptoImpl = globalThis.crypto) {
 }
 
 export async function createLockRecord(pin, { iterations = DEFAULT_ITERATIONS, cryptoImpl = globalThis.crypto } = {}) {
-  if (!PIN_PATTERN.test(String(pin))) throw new Error("PIN must be 4 to 8 digits");
+  const digits = normalizePin(pin);
+  if (!PIN_PATTERN.test(digits)) throw new Error("PIN must be 4 to 8 digits");
   const salt = cryptoImpl.getRandomValues(new Uint8Array(16));
-  const hash = await derive(String(pin), salt, iterations, cryptoImpl);
+  const hash = await derive(digits, salt, iterations, cryptoImpl);
   return { v: 1, salt: toB64(salt), hash: toB64(hash), iterations, failures: 0, lockedUntil: 0 };
 }
 
 export async function verifyPin(pin, record, { cryptoImpl = globalThis.crypto } = {}) {
-  if (!record || !PIN_PATTERN.test(String(pin))) return false;
+  const digits = normalizePin(pin);
+  if (!record || !PIN_PATTERN.test(digits)) return false;
   try {
     const expected = fromB64(record.hash);
-    const actual = await derive(String(pin), fromB64(record.salt), record.iterations, cryptoImpl);
+    const actual = await derive(digits, fromB64(record.salt), record.iterations, cryptoImpl);
     if (expected.length !== actual.length) return false;
     let diff = 0;
     for (let i = 0; i < expected.length; i += 1) diff |= expected[i] ^ actual[i];
@@ -102,5 +108,6 @@ export function describeBackupAge({ neverBackedUp, days }) {
   if (neverBackedUp) return "ما صدّرت نسخة احتياطية بعد.";
   if (days === 0) return "آخر نسخة احتياطية اليوم.";
   if (days === 1) return "آخر نسخة احتياطية قبل يوم.";
-  return `آخر نسخة احتياطية قبل ${days.toLocaleString("ar-KW-u-nu-latn")} يوم.`;
+  if (days === 2) return "آخر نسخة احتياطية قبل يومين.";
+  return `آخر نسخة احتياطية قبل ${countLabel(days, "day")}.`;
 }
