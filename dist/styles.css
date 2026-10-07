@@ -873,3 +873,14 @@ body.is-private #app-main, body.is-private .bottom-nav, body.is-private .app-hea
 
 /* F33: الخانة اللي فيها الخطأ */
 input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 2px var(--c-danger-soft); }
+
+/* الوضع الداكن: بطاقات وحدود وخطوط أوضح عن الخلفية (طلب المؤسس 2026-10-07) */
+@media (prefers-color-scheme: dark) {
+  :root { --card: #1a2742; --line: #3b4c75; --c-line-soft: #3b4c75; --muted: #b4bed2; --c-soft: #243352; --teal-100: #263659; }
+  .daily-budget-card .progress, .progress, .behavior-month-bar { background: #2d3d63; }
+  .coach-card { background: #182a4d; border-color: #38508a; }
+  .pill { background: #263659; }
+  .bottom-nav { background: rgba(18, 28, 50, .98); border-top-color: #3b4c75; }
+  .bottom-nav button { color: #b4bed2; }
+  .bottom-nav button.active { background: #263659; }
+}

@@ -1,4 +1,4 @@
-const CACHE_NAME = "fils-static-v32";
+const CACHE_NAME = "fils-static-v33";
 // شبكة أولاً بمهلة قصيرة: على شبكة ضعيفة ما نخلي الصفحة تنتظر، نرجع النسخة المخزنة (F35).
 const NETWORK_TIMEOUT_MS = 2500;
 const OFFLINE_ASSETS = [
