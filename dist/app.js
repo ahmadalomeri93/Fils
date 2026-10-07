@@ -6,6 +6,7 @@ import { fundGoals, mountSalaryPlan, salaryDue } from "./salary-plan.js";
 import { PIN_PATTERN, backupStatus, createLockRecord, cryptoAvailable, describeBackupAge, hasMeaningfulData, registerFailure, registerSuccess,
   remainingLockMs, sanitizeLockRecord, shouldRelock, verifyPin } from "./safety.js";
 import { GOLD_PRICE_URL, goldSummary, mountGold, priceFromApi, sanitizeGold } from "./gold.js";
+import { decideUpdate, installedVersion, remoteVersion, staticCacheNames, versionLabel } from "./app-update.js";
 import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, notificationFingerprints, parseBankNotification, splitBankMessages, splitStamp, BANK_FIELDS, DEFAULT_FIELD_ORDER } from "./bank-notifications.js";
 import { parsePortfolioLink, newPortfolioHoldings } from "./portfolio-import.js";
 import {
@@ -2509,6 +2510,114 @@ function openSettings() {
   renderBankFieldOrder();
   updateMoneyPreviews($("#settings-form"));
   openDialog($("#settings-dialog"));
+  renderUpdateStatus();
+}
+
+/* ----- زر «تحديث التطبيق» (الإعدادات) -----
+   يفحص ./sw.js من الشبكة (بلا كاش): إذا فشل ما في إنترنت وما نغيّر شي. إذا فيه نسخة أحدث نمسح كاشات فلس بس
+   ونلغي تسجيل الـ service worker ونعيد تحميل الصفحة. ما نلمس localStorage ولا أي بيانات للمستخدم.
+   رقم النسخة من اسم كاش الـ service worker (fils-static-v34 → v34). */
+const UPDATE_FETCH_TIMEOUT_MS = 10_000;
+const UPDATE_RELOAD_DELAY_MS = 900;
+const UPDATE_NOTE_KEY = "fils-update-note"; // sessionStorage فقط (يبقى بعد إعادة التحميل ويختفي بإغلاق التطبيق)
+const updateTimeFormatter = new Intl.DateTimeFormat("ar-KW-u-nu-latn", { hour: "numeric", minute: "2-digit" });
+let lastUpdateCheck = null; // { at, text }
+let startupVersion = null;  // نسخة الكاش لما انفتحت هذي الصفحة
+let updateBusy = false;
+
+function updateSupported() {
+  return "serviceWorker" in navigator && typeof caches !== "undefined" && location.protocol !== "file:";
+}
+
+async function readInstalledVersion() {
+  if (!updateSupported()) return null;
+  try { return installedVersion(await caches.keys()); } catch { return null; }
+}
+
+async function renderUpdateStatus() {
+  const line = $("#update-status");
+  if (!updateSupported()) { line.textContent = "الزر يشتغل بس على نسخة الموقع المثبتة، مو على هذا الملف."; return; }
+  const version = await readInstalledVersion();
+  const parts = [version === null ? "النسخة غير معروفة" : `النسخة ${versionLabel(version)}`];
+  parts.push(lastUpdateCheck ? `آخر فحص ${updateTimeFormatter.format(lastUpdateCheck.at)}: ${lastUpdateCheck.text}` : "ما فحصت لين الحين");
+  line.textContent = parts.join(" · ");
+}
+
+function finishUpdateCheck(text, { toastMessage = text } = {}) {
+  lastUpdateCheck = { at: new Date(), text };
+  if (toastMessage) toast(toastMessage);
+  return renderUpdateStatus();
+}
+
+/* نجيب sw.js من الشبكة مباشرة. الرابط فيه رقم متغير حتى لو كان عند الجهاز service worker قديم
+   يخزن الردود، ما يرجّع لنا نسخة مخزنة ونظنها إنترنت (نجاح الجلب = فيه إنترنت فعلاً). */
+async function fetchRemoteWorker() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`./sw.js?check=${Date.now()}`, { cache: "no-store", signal: controller.signal });
+    return { online: true, source: response.ok ? await response.text() : "" };
+  } catch {
+    return { online: false, source: "" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function checkForUpdate() {
+  if (updateBusy) return;
+  if (!updateSupported()) { toast("الزر يشتغل بس على نسخة الموقع المثبتة"); return; }
+  updateBusy = true;
+  const button = $("#update-app");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  $("#update-status").textContent = "جاري الفحص…";
+  let reloading = false;
+  try {
+    const remote = await fetchRemoteWorker();
+    if (!remote.online) { await finishUpdateCheck("ما في إنترنت، جرب لما يرجع"); return; }
+    const decision = decideUpdate({ installed: await readInstalledVersion(), remote: remoteVersion(remote.source), loaded: startupVersion });
+    if (decision.action === "unreadable") { await finishUpdateCheck("ما قدرت أعرف آخر نسخة، جرب بعد شوي"); return; }
+    if (decision.action === "current") { await finishUpdateCheck(`عندك آخر نسخة (${versionLabel(decision.version)})`); return; }
+    const label = versionLabel(decision.to);
+    await finishUpdateCheck(decision.reason === "stale-page" ? `النسخة ${label} نزلت، بنعيد تشغيل التطبيق` : `في نسخة أحدث (${label})، جاري التحديث…`);
+    try {
+      await Promise.all(staticCacheNames(await caches.keys()).map((name) => caches.delete(name)));
+      await Promise.all((await navigator.serviceWorker.getRegistrations()).map((registration) => registration.unregister()));
+    } catch (error) {
+      console.warn("Update failed", error);
+      await finishUpdateCheck("ما قدرت أكمل التحديث، جرب مرة ثانية");
+      return;
+    }
+    try { sessionStorage.setItem(UPDATE_NOTE_KEY, JSON.stringify({ to: decision.to })); } catch { /* التأكيد بعد الإعادة اختياري */ }
+    reloading = true;
+    setTimeout(() => location.reload(), UPDATE_RELOAD_DELAY_MS);
+    // لو الإعادة ما صارت لأي سبب، الزر يرجع يشتغل
+    setTimeout(() => { updateBusy = false; button.disabled = false; button.removeAttribute("aria-busy"); }, 10_000);
+  } finally {
+    if (!reloading) {
+      updateBusy = false;
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
+}
+
+/* بعد إعادة التحميل: ننتظر الـ service worker الجديد يفعّل وبعدها نأكد النسخة اللي تثبتت */
+async function confirmUpdateAfterReload() {
+  let note = null;
+  try {
+    note = JSON.parse(sessionStorage.getItem(UPDATE_NOTE_KEY) ?? "null");
+    sessionStorage.removeItem(UPDATE_NOTE_KEY);
+  } catch { /* بدون تأكيد */ }
+  if (!note || !updateSupported()) return;
+  try {
+    await Promise.race([navigator.serviceWorker.ready, new Promise((resolve) => setTimeout(resolve, 20_000))]);
+    const version = await readInstalledVersion();
+    if (version !== note.to) return;
+    startupVersion = version;
+    await finishUpdateCheck(`تم التحديث إلى ${versionLabel(version)}`, { toastMessage: `تم تحديث التطبيق إلى النسخة ${versionLabel(version)}` });
+  } catch { /* التأكيد اختياري */ }
 }
 
 let ocrEnginePromise = null;
@@ -3230,6 +3339,7 @@ function bindEvents() {
   });
   $("#settings-form").addEventListener("submit", submitSettings);
   $("#settings-button").addEventListener("click", openSettings);
+  $("#update-app").addEventListener("click", checkForUpdate);
   $$("[data-bank-field]").forEach((select) => select.addEventListener("change", previewBankFieldOrder));
   $("#bank-field-reset").addEventListener("click", () => {
     $$("[data-bank-field]").forEach((select, index) => { select.value = DEFAULT_FIELD_ORDER[index] ?? ""; });
@@ -3441,6 +3551,9 @@ function initialize() {
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
     navigator.serviceWorker.register("./sw.js").catch((error) => console.warn("Service worker registration failed", error));
   }
+  // نسخة الكاش وقت فتح الصفحة (إذا الصفحة خاضعة لـ service worker): نعرف بعدين لو الملفات تحدّثت والصفحة لسا قديمة
+  if (updateSupported() && navigator.serviceWorker.controller) readInstalledVersion().then((version) => { startupVersion = version; });
+  confirmUpdateAfterReload();
 }
 
 initialize();

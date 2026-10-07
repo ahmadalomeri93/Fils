@@ -874,6 +874,11 @@ body.is-private #app-main, body.is-private .bottom-nav, body.is-private .app-hea
 /* F33: الخانة اللي فيها الخطأ */
 input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 2px var(--c-danger-soft); }
 
+/* زر «تحديث التطبيق» في الإعدادات (v34): عرض كامل وهدف لمس 44px+ والألوان من نفس رموز .secondary */
+.update-button { width: 100%; min-height: 48px; }
+.update-button:disabled { opacity: .6; cursor: progress; }
+.data-actions .update-status { margin: 8px 0 0; overflow-wrap: anywhere; }
+
 /* الوضع الداكن: بطاقات وحدود وخطوط أوضح عن الخلفية (طلب المؤسس 2026-10-07) */
 @media (prefers-color-scheme: dark) {
   :root { --card: #1a2742; --line: #3b4c75; --c-line-soft: #3b4c75; --muted: #b4bed2; --c-soft: #243352; --teal-100: #263659; }
