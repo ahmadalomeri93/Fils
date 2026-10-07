@@ -1817,6 +1817,8 @@ function renderStatementPreview(batch) {
   setText("#statement-preview-period", stats.startDate ? `${formatDate(stats.startDate)} — ${formatDate(stats.endDate)}` : "كل المصروفات الموجودة مضافة من قبل");
   setText("#statement-preview-count", countLabel(transactions.length, "transaction"));
   setText("#statement-preview-total", formatMoney(stats.totalFils));
+  const possibleCount = stats.possibleDuplicates ?? 0;
+  setText("#statement-match-summary", `طابقت ${stats.duplicates.toLocaleString("ar-KW-u-nu-latn")} عملية موجودة عندك، وناقص ${transactions.length.toLocaleString("ar-KW-u-nu-latn")} بنضيفها${possibleCount ? ` (منها ${possibleCount.toLocaleString("ar-KW-u-nu-latn")} قد تكون مكررة، راجعها)` : ""}.`);
   setText("#statement-preview-duplicates", stats.duplicates.toLocaleString("ar-KW-u-nu-latn"));
   setText("#statement-preview-excluded", `${(stats.credits + stats.transfers).toLocaleString("ar-KW-u-nu-latn")}${stats.transfersFils ? ` · منها مصروفات مستبعدة ${formatMoney(stats.transfersFils)}` : ""}`);
   setText("#statement-preview-skipped", (stats.invalidRows + stats.outOfRange).toLocaleString("ar-KW-u-nu-latn"));
@@ -1841,6 +1843,7 @@ function submitStatementImport(event) {
     $("#statement-import-error").textContent = "عدد العمليات يتجاوز سعة السجل الحالي. صدّر نسخة وقلّل السجلات قبل الاستيراد.";
     return;
   }
+  const matchedCount = pendingStatementBatch.stats.duplicates ?? 0;
   state.transactions.push(...transactions.map((item) => ({ id: createId(), ...item })));
   const startDate = transactions[0].date;
   const endDate = transactions.at(-1).date;
@@ -1862,7 +1865,7 @@ function submitStatementImport(event) {
   const possible = transactions.filter((item) => item.possibleDuplicate).length;
   commit(possible
     ? `استوردت ${countLabel(transactions.length, "transaction")} · ${countLabel(possible, "transaction")} علّمتها «قد تكون مكررة» لمراجعتك`
-    : `تم استيراد ${countLabel(transactions.length, "transaction")} وتحليلها`, { render: false });
+    : `طابقت ${(matchedCount).toLocaleString("ar-KW-u-nu-latn")} موجودة وأضفت ${countLabel(transactions.length, "transaction")} ناقصة`, { render: false });
 }
 
 const INCOME_CATEGORIES = ["راتب", "أخرى"];

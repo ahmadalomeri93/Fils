@@ -708,6 +708,8 @@ body.is-locked > :not(.lock-screen):not(dialog) { display: none !important; }
 .bank-card-actions { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px; }
 .bank-card-actions > * { min-height: 52px; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: 800; }
 .bank-card-review { width: 100%; margin-top: 12px; min-height: 50px; }
+.bank-card-statement { width: 100%; margin-top: 10px; min-height: 50px; font-weight: 800; }
+.statement-match-summary { margin: 0 0 10px; font-weight: 800; line-height: 1.7; color: var(--text-strong); }
 .link-button { display: block; margin: 12px auto 0; padding: 6px 4px; border: 0; background: none; color: var(--text-accent); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 #bank-paste-clipboard { width: 100%; margin-bottom: 10px; min-height: 48px; }
 @media (max-width: 360px) { .bank-card-actions { grid-template-columns: 1fr 1fr; } .bank-card-actions > :first-child { grid-column: 1 / -1; } }

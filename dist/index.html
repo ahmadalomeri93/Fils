@@ -59,6 +59,7 @@
           <button type="button" class="secondary" data-action="paste-bank">لصق رسالة</button>
           <button type="button" class="secondary" data-action="new-transaction">＋ يدوي</button>
         </div>
+        <button type="button" class="secondary bank-card-statement" data-action="import-statement">رفع كشف حساب الشهر</button>
         <button type="button" class="primary bank-card-review" id="bank-card-review" data-action="review-pending" hidden>راجع العمليات الجديدة</button>
         <button type="button" class="link-button" data-action="bank-automation-guide">طريقة الربط مع الآيفون (مرة وحدة)</button>
       </section>
@@ -137,7 +138,7 @@
 
     <section class="view" id="transactions-view" data-view="transactions">
       <div class="page-title"><div><span class="eyebrow">حركة فلوسك</span><h1>العمليات</h1></div><button class="primary" data-action="new-transaction">＋ إضافة</button></div>
-      <button class="secondary statement-import-button" type="button" data-action="import-statement">تحميل/استيراد كشف حساب 12 شهر</button>
+      <button class="secondary statement-import-button" type="button" data-action="import-statement">رفع كشف حساب (شهر أو أكثر)</button>
       <section class="pending-inbox" id="pending-inbox" hidden>
         <div class="section-heading"><div><span class="eyebrow">وصلت من البنك</span><h2>تحتاج مراجعتك</h2></div><span class="pill" id="pending-count">0</span></div>
         <div class="pending-inbox-list" id="pending-inbox-list"></div>
@@ -389,7 +390,7 @@
     </div>
     <h3>أدوات البنك</h3>
     <div class="more-tools">
-      <button type="button" class="secondary" data-action="import-statement">تحميل كشف حساب 12 شهر</button>
+      <button type="button" class="secondary" data-action="import-statement">رفع كشف حساب الشهر</button>
       <button type="button" class="secondary" data-action="import-bank">لصق رسالة بنك</button>
       <button type="button" class="secondary" data-action="bank-automation-guide">ربط إشعارات بوبيان</button>
     </div>
@@ -434,7 +435,7 @@
 
   <dialog id="statement-import-dialog" class="wide-dialog">
     <form id="statement-import-form" novalidate>
-      <div class="dialog-heading"><div><h2>استيراد كشف حساب 12 شهر</h2><span class="eyebrow">بوبيان · مراجعة قبل الإضافة</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="dialog-heading"><div><h2>رفع كشف حساب</h2><span class="eyebrow">بوبيان · شهر أو أكثر · مراجعة قبل الإضافة</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
       <div class="notice privacy-notice">نزّل كشف المعاملات من بوبيان، ثم اختر الملف هنا. «فلس» ما يطلب بيانات دخول البنك، ويقرأ الملف محليًا على جهازك. لتحليل مشتريات الفيزا بالتفصيل ارفع كشف البطاقة أيضًا؛ تسديد البطاقة من الحساب يُستبعد حتى ما ينحسب الشراء مرتين.</div>
       <label class="field"><span>ملف كشف الحساب</span><input id="statement-file" type="file" accept=".pdf,application/pdf,.csv,.tsv,.ofx,.qfx,.txt,text/csv,text/tab-separated-values,application/x-ofx,application/vnd.intu.qfx"></label>
       <p class="hint">الصيغ المدعومة PDF وCSV وTSV وOFX/QFX. دعم PDF حالياً لكشف بوبيان النصي بالعربي؛ الصور الممسوحة والملفات المحمية غير مدعومة. نضيف المصروفات فقط؛ الإيداعات والتحويلات بين الحسابات تستبعد من تحليل الصرف.</p>
@@ -442,6 +443,7 @@
       <p class="form-error" id="statement-import-error" role="alert"></p>
       <section id="statement-import-preview" class="statement-import-preview" hidden>
         <div class="section-heading"><div><span class="eyebrow">معاينة قبل الحفظ</span><h3 id="statement-preview-period">—</h3></div><span class="pill" id="statement-preview-count">0 عملية</span></div>
+        <p class="statement-match-summary" id="statement-match-summary" role="status"></p>
         <div class="statement-preview-totals">
           <div><span>مصروفات جديدة</span><strong id="statement-preview-total">0.000 د.ك</strong></div>
           <div><span>مكررة تم تجاهلها</span><strong id="statement-preview-duplicates">0</strong></div>
@@ -453,7 +455,7 @@
         <div id="statement-preview-list" class="statement-preview-list"></div>
         <p class="hint">التصنيف الآلي اقتراح أولي؛ تقدر تعدل تصنيف أي عملية بعد الاستيراد من صفحة العمليات.</p>
       </section>
-      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary" id="statement-import-confirm" disabled>اعتماد المصروفات وتحليلها</button></div>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary" id="statement-import-confirm" disabled>إضافة الناقص وتحليله</button></div>
     </form>
   </dialog>
 
