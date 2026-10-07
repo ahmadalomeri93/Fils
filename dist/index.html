@@ -422,11 +422,12 @@
     <form id="bank-form" novalidate>
       <div class="dialog-heading"><h2>لصق تنبيه البنك</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
       <div class="notice">الصق إشعاراً واحداً أو عدة إشعارات (افصل بينها بسطر فاضي). يفهم فلس الشراء والسحب والتحويل والراتب والاسترداد، ويتجاهل رمز التحقق والعمليات المرفوضة، وتراجع كل شيء قبل الاعتماد.</div>
+      <div class="notice warning" id="bank-browser-note" hidden>أنت فاتح فلس من Safari، مو من أيقونة فلس. اللي تضيفه هنا ما يوصل بياناتك اللي بالأيقونة (التخزين منفصل). افتح أيقونة فلس من الشاشة الرئيسية وجرب من هناك.</div>
       <button type="button" class="secondary" id="bank-paste-clipboard">لصق من الحافظة</button>
-      <label class="field"><span>نص الرسالة</span><textarea id="bank-text" rows="6" placeholder="Purchase of KWD 12.450 at TALABAT"></textarea></label>
-      <label class="field"><span>تاريخ العملية (إذا ما كان مكتوباً في الإشعار)</span><input id="bank-date" type="date" min="2000-01-01"></label>
+      <label class="field"><span>نص الرسالة</span><textarea id="bank-text" rows="4" placeholder="Purchase of KWD 12.450 at TALABAT"></textarea></label>
       <div class="bank-preview" id="bank-preview" aria-live="polite"></div>
       <p class="form-error" id="bank-error" role="alert"></p>
+      <label class="field"><span>تاريخ العملية (إذا ما كان مكتوباً في الإشعار)</span><input id="bank-date" type="date" min="2000-01-01"></label>
       <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">إضافة للمراجعة</button></div>
     </form>
   </dialog>

@@ -368,7 +368,7 @@ dialog form { display: grid; gap: 14px; padding: 21px; }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dialog-heading h2 { margin: 0; }
 .close-dialog { display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 12px; color: var(--text-strong); background: var(--teal-100); font-size: 1.55rem; }
-.dialog-actions { position: sticky; bottom: -21px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 4px -21px -21px; padding: 14px 21px calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--bar-bg); backdrop-filter: blur(14px); }
+.dialog-actions { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 4px -21px -21px; padding: 14px 21px calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--bar-bg); backdrop-filter: blur(14px); }
 .checkbox { display: flex; align-items: flex-start; gap: 9px; font-size: .84rem; }
 .checkbox input { margin-top: 3px; accent-color: var(--teal-800); }
 .form-error { min-height: 1.2em; margin: -3px 0 0; color: var(--danger); font-size: .8rem; }
@@ -622,6 +622,8 @@ dialog form { display: grid; gap: 14px; padding: 21px; }
 
 .bank-preview { display: grid; gap: 6px; margin: 10px 0; font-size: .78rem; line-height: 1.6; }
 .bank-preview:empty { display: none; }
+#bank-text { min-height: 7.5rem; }
+#bank-preview, #bank-error { scroll-margin-bottom: 96px; }
 .bank-preview > div { padding: 8px 10px; border-radius: 12px; background: rgba(120,130,150,.12); }
 .pending-inbox-item .sync-balance, .approve-all { grid-column: 1 / -1; width: 100%; }
 .pending-inbox-amount.income { color: #1f9d63; }

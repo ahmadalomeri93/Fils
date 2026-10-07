@@ -597,6 +597,7 @@ function ingestBankText(raw, { fromFile = false, dateOverrideISO = "" } = {}) {
 }
 
 function manualBankMessage(notification) {
+  if (notification.reason === "no_amount") return "النص ناقص أو ما فيه مبلغ. انسخ الرسالة كاملة من أولها لآخرها (فيها «مبلغ … د.ك»)، أو أضفها يدويًا.";
   if (notification.reason === "foreign" && notification.foreign) {
     return `عملة أجنبية: ${notification.foreign.currency} ${notification.foreign.amount} — أضفها يدوياً بالدينار حسب مبلغ كشف البنك.`;
   }
@@ -625,7 +626,7 @@ function reportBankSummary(summary) {
 }
 
 function describeNotification(notification) {
-  if (notification.ignored || notification.needsManual) return `⚠ ${escapeHTML(notification.reason === "foreign" && notification.foreign ? manualBankMessage(notification) : (NOTIFICATION_REASONS[notification.reason] ?? "غير معروف"))}`;
+  if (notification.ignored || notification.needsManual) return `⚠ ${escapeHTML((notification.reason === "foreign" && notification.foreign) || notification.reason === "no_amount" ? manualBankMessage(notification) : (NOTIFICATION_REASONS[notification.reason] ?? "غير معروف"))}`;
   const sign = notification.kind === "income" ? "\u200E+" : "\u200E−";
   const bits = [
     NOTIFICATION_TYPE_LABELS[notification.type] ?? "عملية",
@@ -638,9 +639,25 @@ function describeNotification(notification) {
   return `✓ ${bits.map(escapeHTML).join(" · ")}`;
 }
 
+function revealBankFeedback() {
+  const target = $("#bank-error").textContent ? $("#bank-error") : $("#bank-preview");
+  if (!target.textContent.trim()) return;
+  // الأزرار ثابتة بأسفل النافذة، فنمرّر لو الرسالة صارت تحتها
+  requestAnimationFrame(() => {
+    const footer = $("#bank-dialog .dialog-actions")?.getBoundingClientRect();
+    if (footer && target.getBoundingClientRect().bottom > footer.top - 8) target.scrollIntoView({ block: "end" });
+  });
+}
+
+function inBrowserTab() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) && !(matchMedia("(display-mode: standalone)").matches || navigator.standalone === true);
+}
+
 function renderBankPreview() {
   const box = $("#bank-preview");
   if (!box) return;
+  const browserNote = $("#bank-browser-note");
+  if (browserNote) browserNote.hidden = !inBrowserTab();
   const messages = splitBankMessages($("#bank-text").value);
   const today = todayISO();
   const override = $("#bank-date")?.value ?? "";
@@ -660,6 +677,7 @@ function renderBankPreview() {
     return `<div>${describeNotification(notification)}${flag}</div>`;
   }).join("") +
     (messages.length > 5 ? `<div>… و${countLabel(messages.length - 5, "notification")} أخرى</div>` : "");
+  revealBankFeedback();
 }
 
 function financialContext(today = todayISO()) {
@@ -3353,18 +3371,18 @@ function bindEvents() {
   });
   $("#bank-paste-clipboard").addEventListener("click", async () => {
     const text = await pasteBankFromClipboard();
-    if (!text) { $("#bank-error").textContent = "اضغط مطولاً داخل المربع واختر «لصق»."; invalidField("#bank-text", "#bank-error"); return; }
+    if (!text) { $("#bank-error").textContent = "اضغط مطولاً داخل المربع واختر «لصق»."; invalidField("#bank-text", "#bank-error"); revealBankFeedback(); return; }
     $("#bank-text").value = text; $("#bank-error").textContent = ""; renderBankPreview();
   });
   $("#bank-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const summary = ingestBankText($("#bank-text").value, { dateOverrideISO: $("#bank-date").value });
-    if (!summary.total) { $("#bank-error").textContent = "الصق نص إشعار واحد على الأقل."; return; }
-    if (!summary.queued && !summary.duplicates && !summary.ignored.length) { $("#bank-error").textContent = manualBankMessage(summary.manual[0]); return; }
+    if (!summary.total) { $("#bank-error").textContent = "الصق نص إشعار واحد على الأقل."; revealBankFeedback(); return; }
+    if (!summary.queued && !summary.duplicates && !summary.ignored.length) { $("#bank-error").textContent = manualBankMessage(summary.manual[0]); revealBankFeedback(); return; }
     closeDialog($("#bank-dialog"));
     reportBankSummary(summary);
   });
-  $("#bank-text").addEventListener("input", renderBankPreview);
+  $("#bank-text").addEventListener("input", () => { $("#bank-error").textContent = ""; renderBankPreview(); });
   $("#statement-file").addEventListener("change", (event) => prepareStatementImport(event.target.files?.[0]));
   $("#statement-import-form").addEventListener("submit", submitStatementImport);
   $("#statement-import-dialog").addEventListener("close", () => {
