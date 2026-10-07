@@ -108,15 +108,17 @@ main { width: min(100%, 1040px); margin: 0 auto; padding: 22px 18px calc(110px +
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: repeat(5, minmax(118px, 1fr));
+  /* 6 خانات: عمودين × 3 صفوف على الجوال و3 × 2 على الشاشات الأعرض — كلها ظاهرة بدون تمرير أفقي ولا قص (v35) */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
-  overflow-x: auto;
+  overflow: hidden;
   margin: -18px 15px 17px;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: var(--line);
   box-shadow: var(--shadow);
 }
+@media (min-width: 560px) { .safe-breakdown { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .safe-breakdown div { min-width: 0; padding: 13px 10px; background: var(--card); text-align: center; }
 .safe-breakdown span, .safe-breakdown strong { display: block; }
 .safe-breakdown span { color: var(--muted); font-size: .68rem; }
@@ -201,6 +203,19 @@ main { width: min(100%, 1040px); margin: 0 auto; padding: 22px 18px calc(110px +
 .statement-preview-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .statement-preview-item small { display: block; color: var(--muted); }
 .statement-preview-item strong { color: var(--danger); white-space: nowrap; }
+/* «قد تكون مكررة»: غير معلّمة افتراضياً، المستخدم يعلّم اللي يبي يضيفه (v35) */
+.statement-possible { margin: 0 0 12px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
+.statement-possible-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.statement-possible-head > div { min-width: 0; }
+.statement-possible-head strong, .statement-possible-head small { display: block; }
+.statement-possible-head small { color: var(--muted); font-size: .75rem; line-height: 1.6; }
+.statement-possible-head button { flex: 0 0 auto; min-height: 44px; padding-inline: 14px; }
+.statement-possible-list { display: grid; gap: 4px; max-height: 260px; overflow: auto; }
+.statement-possible-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 48px; padding: 6px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.statement-possible-item input { width: 22px; height: 22px; margin: 0; }
+.statement-possible-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statement-possible-item small { display: block; color: var(--muted); }
+.statement-possible-item strong { color: var(--danger); white-space: nowrap; }
 .coach-card { display: flex; gap: 14px; padding: 18px; border-radius: var(--radius); color: #101b36; background: linear-gradient(135deg, #f5ffd7, #e6f8a8); border: 1px solid #c5df6a; }
 .coach-card p { margin: 5px 0 0; line-height: 1.6; }
 .coach-icon { display: grid; place-items: center; flex: 0 0 38px; height: 38px; border-radius: 13px; color: white; background: var(--copper-600); }
@@ -463,7 +478,7 @@ dialog form { display: grid; gap: 14px; padding: 21px; }
 .card-status.active { color: var(--c-ok-ink); background: var(--c-ok-soft); }
 .card-status.paid, .card-status.completed { color: var(--text-strong); background: var(--teal-100); }
 .commitment-paid-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--c-line-soft); border-radius: 12px; color: var(--text-strong); background: var(--card); font-weight: 800; }
-.commitment-paid-toggle > span { font-size: 1.05rem; }
+.commitment-paid-toggle > span { font-size: 1.05rem; pointer-events: none; }
 .commitment-paid-toggle.is-paid { border-color: #a5d6bc; color: #17633f; background: #ecf8f1; }
 .card-status.paused, .card-status.stopped { color: var(--muted); background: #eef1f0; }
 .card-status.overdue { color: var(--danger); background: var(--c-danger-soft); }
@@ -535,10 +550,9 @@ dialog form { display: grid; gap: 14px; padding: 21px; }
   .hero-card { padding: 21px; }
   .hero-coin { width: 72px; height: 72px; font-size: 2.35rem; }
   .safe-breakdown { margin-inline: 7px; }
-  .safe-breakdown { margin-inline: 7px; scroll-snap-type: x proximity; }
-  .safe-breakdown div { padding-inline: 9px; scroll-snap-align: start; }
-  .safe-breakdown span { font-size: .62rem; }
-  .safe-breakdown strong { font-size: .76rem; }
+  .safe-breakdown div { padding-inline: 9px; }
+  .safe-breakdown span { font-size: .68rem; line-height: 1.5; }
+  .safe-breakdown strong { font-size: .8rem; }
   .form-grid { grid-template-columns: 1fr; }
   .toolbar-card, .commitment-toolbar { grid-template-columns: 1fr; }
   .toolbar-card select { max-width: none; }
@@ -837,7 +851,19 @@ button.small, .small.primary, .small.secondary, .small.danger, .small.ghost, .fi
 .upcoming-strip, .upcoming-strip > * { min-width: 0; }
 .upcoming-strip strong, .upcoming-strip p, .data-card .detail strong, .data-card .card-summary-grid strong { overflow-wrap: anywhere; }
 .item-actions { flex-wrap: wrap; }
+/* F58 (v35): ×  تنبيه الإخفاء وزر «طريقة الربط» كانا 30 و36 نقطة */
+.dismiss-alert { width: 44px; height: 44px; font-size: 1.3rem; }
+.link-button { min-height: 44px; padding: 10px 8px; }
+.debt-details summary { display: flex; align-items: center; min-height: 44px; padding-top: 0; }
+#transaction-search, #commitment-search { min-height: 44px; }
+.stock-source-note a { display: inline-flex; align-items: center; min-height: 44px; }
 .financial-alert strong, .financial-alert small, .sp-line > * { min-width: 0; overflow-wrap: anywhere; }
+/* v35: اسم قرض أو جهة بدون مسافات (60 حرفاً) كان يوسّع الفحص المالي والمستشار إلى 555px ويزيح الشريط السفلي */
+.cu-list, .cu-list li, .cu-row, .cu-row > *, .advisor-budget-list > div, .advisor-budget-list span,
+.debt-meta span, .commitment-meta span, .advisor-allocations article > *, .detail span, .card-summary-grid span { min-width: 0; overflow-wrap: anywhere; }
+.debt-meta, .commitment-meta { min-width: 0; max-width: 100%; }
+.panel, .organized-content, .view > * { min-width: 0; }
+.view p, .view li, .view small, .view h3 { overflow-wrap: anywhere; }
 
 /* F11: تحذير دائم إذا فشل الحفظ على الجهاز */
 .notice.danger { color: var(--danger); background: var(--c-danger-soft); border-color: var(--c-danger-line); }

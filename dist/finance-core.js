@@ -90,6 +90,17 @@ export function countLabel(count, unit) {
   return `${number.toLocaleString("ar-KW-u-nu-latn")} ${word}`.trim();
 }
 
+/* البحث يوحّد الأرقام والفواصل العربية قبل المقارنة (F50): «12» تلقى «١٢» و«5.660» تلقى المبلغ. */
+export function searchText(value) {
+  return normalizeDigits(String(value ?? "")).replaceAll("٫", ".").replaceAll("٬", "").replace(/[\u200e\u200f\u061c]/g, "").toLowerCase();
+}
+
+/* بحث الالتزامات: الاسم والتصنيف والملاحظات والمبلغ، بنفس قواعد بحث العمليات. */
+export function commitmentMatches(commitment, query) {
+  if (!query) return true;
+  return searchText(`${commitment.name} ${commitment.category} ${commitment.notes} ${moneyInput(commitment.amountFils)}`).includes(query);
+}
+
 export function moneyInput(fils = 0) {
   const sign = fils < 0 ? "-" : "";
   const absolute = Math.abs(Math.trunc(fils));

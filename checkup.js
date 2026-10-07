@@ -1,4 +1,4 @@
-import { formatMoney, investmentProjection, moneyInput, parseMoney } from "./finance-core.js";
+import { countLabel, formatMoney, investmentProjection, moneyInput, parseMoney } from "./finance-core.js";
 import { calculateStockPosition, getKuwaitStock } from "./kuwait-stocks.js";
 
 const clamp = (value, low = 0, high = 100) => Math.min(high, Math.max(low, value));
@@ -118,7 +118,7 @@ export function portfolioConcentration(holdings = [], overrides = {}) {
   const warnings = [];
   if (withShare[0].sharePercent > 40) warnings.push(`سهم ${withShare[0].name} يمثل ${withShare[0].sharePercent.toFixed(0)}٪ من المحفظة — تركز مرتفع في شركة واحدة.`);
   if (sectors[0].sharePercent > 60) warnings.push(`قطاع «${sectors[0].sector}» يمثل ${sectors[0].sharePercent.toFixed(0)}٪ — تركز قطاعي مرتفع.`);
-  if (withShare.length < 5) warnings.push(`المحفظة ${withShare.length} أسهم فقط؛ التنويع الجيد يبدأ عادة من 5 شركات في قطاعات مختلفة.`);
+  if (withShare.length < 5) warnings.push(`المحفظة ${countLabel(withShare.length, "stock")} فقط؛ التنويع الجيد يبدأ عادة من 5 شركات في قطاعات مختلفة.`);
   return { rows: withShare, sectors, totalFils: total, hhi, warnings };
 }
 
@@ -191,7 +191,7 @@ export function mountCheckup(root, { getModel, getUi, setUi }) {
       annualRate: model.investment.annualRate, inflationRate: inflation, years: model.investment.years });
     setUi({ inflationRate: Number.isFinite(inflation) ? inflation : 2.5 });
     $("#cu-real-out").innerHTML = result
-      ? `<div><span>القيمة الاسمية بعد ${model.investment.years} سنة</span><strong>${esc(formatMoney(result.nominalFils))}</strong></div>
+      ? `<div><span>القيمة الاسمية بعد ${countLabel(model.investment.years, "year")}</span><strong>${esc(formatMoney(result.nominalFils))}</strong></div>
          <div><span>القوة الشرائية الحقيقية</span><strong>${esc(formatMoney(result.realFils))}</strong></div>
          <div><span>العائد الحقيقي السنوي</span><strong>${n1(result.realRate)}٪</strong></div>`
       : `<p class="hint">تأكد من قيم التضخم وسيناريو الاستثمار.</p>`;

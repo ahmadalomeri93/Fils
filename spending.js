@@ -209,7 +209,7 @@ export function mountSpending(root, { getModel, onBudgetsChange }) {
           <p class="hint">من ميزانية الشهر الإجمالية ${esc(formatMoney(overallBudget))} (${num(Math.round(report.actualTotalFils / overallBudget * 100))}٪).</p>` : `<p class="hint">حدد ميزانية الشهر من الإعدادات لتظهر النسبة هنا.</p>`}
         ${chart.total ? `<div class="sp-stack" role="img" aria-label="توزيع الصرف حسب الفئة">${chart.segments.map((seg) => `<span style="flex:${seg.fils};background:var(--series-${seg.slot ?? "other"})" title="${esc(seg.category)}: ${esc(formatMoney(seg.fils))} (${num(Math.round(seg.pct * 100))}٪)"></span>`).join("")}</div>
           <ul class="sp-legend">${chart.legend.map((item) => `<li><i style="background:var(--series-${item.slot ?? "other"})"></i><span>${esc(item.category)}</span><b>${num(Math.round(item.pct * 100))}٪</b></li>`).join("")}</ul>` : ""}
-        ${model.pendingCount ? `<p class="hint warn-hint">⚠ ${num(model.pendingCount)} عمليات تنتظر مراجعتك ولا تُحسب هنا قبل اعتمادها.</p>` : ""}
+        ${model.pendingCount ? `<p class="hint warn-hint">⚠ ${countLabel(model.pendingCount, "transaction")} بانتظار مراجعتك ولا تُحسب هنا قبل اعتمادها.</p>` : ""}
       </section>
 
       <section class="panel">
@@ -240,7 +240,7 @@ export function mountSpending(root, { getModel, onBudgetsChange }) {
             <div><span>الشهر السابق (نفس الفترة)</span><strong>${esc(formatMoney(comparison.prevTotal))}</strong></div>
             <div class="advisor-budget-total"><span>الفرق</span><strong>${comparison.deltaFils > 0 ? "+" : comparison.deltaFils < 0 ? "\u200E−" : ""}${esc(formatMoney(Math.abs(comparison.deltaFils)))}</strong></div>
           </div>
-          ${comparison.deltaFils !== 0 ? `<p class="hint">الفرق من عدد العمليات: ${comparison.volumeFils >= 0 ? "\u200E+" : "\u200E−"}${esc(formatMoney(Math.abs(comparison.volumeFils)))} (${num(comparison.prevCount)} ← ${num(comparison.curCount)} عملية). ومن متوسط العملية: ${comparison.ticketFils >= 0 ? "\u200E+" : "\u200E−"}${esc(formatMoney(Math.abs(comparison.ticketFils)))} (${esc(formatMoney(comparison.avgPrevFils))} ← ${esc(formatMoney(comparison.avgCurFils))}).</p>` : ""}
+          ${comparison.deltaFils !== 0 ? `<p class="hint">الفرق من عدد العمليات: ${comparison.volumeFils >= 0 ? "\u200E+" : "\u200E−"}${esc(formatMoney(Math.abs(comparison.volumeFils)))} (${num(comparison.prevCount)} ← ${countLabel(comparison.curCount, "transaction")}). ومن متوسط العملية: ${comparison.ticketFils >= 0 ? "\u200E+" : "\u200E−"}${esc(formatMoney(Math.abs(comparison.ticketFils)))} (${esc(formatMoney(comparison.avgPrevFils))} ← ${esc(formatMoney(comparison.avgCurFils))}).</p>` : ""}
           <h3>أكبر التغيّرات</h3>
           <div class="advisor-budget-list">${comparison.categories.slice(0, 5).filter((item) => item.deltaFils !== 0).map((item) => `<div><span>${esc(item.category)}</span><strong>${item.deltaFils > 0 ? "\u200E+" : "\u200E−"}${esc(formatMoney(Math.abs(item.deltaFils)))}</strong></div>`).join("") || "<p class='hint'>ما فيه تغيّر يُذكر.</p>"}</div>`
         : `<p class="hint">ما فيه عمليات معتمدة بالشهر السابق للمقارنة.</p>`}

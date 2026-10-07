@@ -11,6 +11,7 @@ import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, notificationFingerprint
 import { parsePortfolioLink, newPortfolioHoldings } from "./portfolio-import.js";
 import {
   categories,
+  commitmentMatches,
   countLabel,
   inferCategory,
   createId,
@@ -28,6 +29,7 @@ import {
   parseMoney,
   parseRate,
   payoff,
+  searchText,
   todayISO
 } from "./finance-core.js";
 import {
@@ -35,6 +37,7 @@ import {
   addDaysISO,
   addMonthsISO,
   answerFinancialQuestion,
+  cashDeduction,
   commitmentOccurrences,
   commitmentRecurrences,
   commitmentSummary,
@@ -51,6 +54,8 @@ import {
   monthBounds,
   monthlySurplus,
   monthlyCommitmentEquivalent,
+  paymentCashDeductedFils,
+  recentInstallmentPayment,
   remainingInstallments,
   safeToSpendEngine,
   sameDueMonth,
@@ -58,7 +63,7 @@ import {
   spendingComparison,
   totalMonthlyIncome
 } from "./financial-engine.js";
-import { parseLoanOCRLoans, scanAmountWarnings } from "./loan-ocr.js";
+import { hasScanSignal, parseLoanOCRLoans, scanAmountWarnings } from "./loan-ocr.js";
 import { analyzeSpendingBehavior, parseBankStatement } from "./statement-import.js";
 import {
   KUWAIT_STOCKS_AS_OF,
@@ -221,7 +226,9 @@ function sanitizeState(raw) {
     id: typeof item?.id === "string" ? item.id.slice(0, 100) : createId(),
     commitmentId: typeof item?.commitmentId === "string" ? item.commitmentId.slice(0, 100) : "",
     amountFils: finiteInteger(item?.amountFils), dueDate: optionalDate(item?.dueDate), paidAt: optionalDate(item?.paidAt), status: item?.status === "reversed" ? "reversed" : "paid",
-    cashDeducted: item?.cashDeducted === true
+    cashDeducted: item?.cashDeducted === true,
+    // المبلغ اللي انخصم فعلاً من الرصيد (يقل عن amountFils لو الرصيد ما يكفي)؛ الدفعات القديمة بدونه تُقرأ من العلامة فقط
+    ...(Number.isSafeInteger(item?.cashDeductedFils) && item.cashDeductedFils >= 0 ? { cashDeductedFils: Math.min(item.cashDeductedFils, finiteInteger(item?.amountFils)) } : {})
   })).filter((item) => item.commitmentId && item.dueDate && item.amountFils > 0) : [];
 
   clean.creditCards = Array.isArray(raw.creditCards) ? raw.creditCards.slice(0, 50).map((item) => ({
@@ -704,6 +711,9 @@ function financialContext(today = todayISO()) {
     commitments: state.monthlyCommitments,
     commitmentPayments: state.commitmentPayments,
     reservedCreditCardFils: safe?.reservedCreditCardFils ?? state.settings.creditCardReserveFils,
+    // نفس منطق المتاح الآمن: المعاش يُحسب إذا يوم نزوله لسه قدّام هذا الشهر (v35)
+    incomeFils,
+    salaryDay: state.settings.salaryDay,
     todayISO: today
   });
   const bounds = monthBounds(today);
@@ -862,7 +872,8 @@ function renderDashboard() {
   if (context.forecast?.sufficient) {
     setText("#forecast-status", "تقديري");
     setText("#forecast-balance", formatMoney(context.forecast.forecastAvailableFils));
-    setText("#forecast-message", `إذا استمر صرفك بمتوسط ${formatMoney(context.forecast.averageDailyFils)} يومياً، فهذا هو المتاح المتوقع بنهاية الشهر.`);
+    const salaryNote = context.forecast.salaryFils > 0 ? ` يشمل معاشك ${formatMoney(context.forecast.salaryFils)} بتاريخ ${formatDate(context.forecast.salaryDateISO)}، وبعد خصم أقساطك والتزاماتك ودفعة البطاقات مرة وحدة.` : "";
+    setText("#forecast-message", `إذا استمر صرفك بمتوسط ${formatMoney(context.forecast.averageDailyFils)} يومياً، فهذا هو المتاح المتوقع بنهاية الشهر.${salaryNote}`);
   } else {
     setText("#forecast-status", "بيانات غير كافية");
     setText("#forecast-balance", "—");
@@ -930,9 +941,6 @@ const sourceLabel = (source) => source === "manual" ? "يدوي" : source === "b
 const cardChip = (item) => item.cardLast4 ? ` · ${item.cardKind === "account" ? "حساب" : "بطاقة"} ••${escapeHTML(item.cardLast4)}` : "";
 
 /* البحث يشمل الاسم الخام والتصنيف والتاريخ والمبلغ، ويوحّد الأرقام والفواصل العربية قبل المقارنة (F50). */
-function searchText(value) {
-  return normalizeDigits(String(value ?? "")).replaceAll("٫", ".").replaceAll("٬", "").replace(/[‎‏؜]/g, "").toLowerCase();
-}
 function transactionMatches(item, query) {
   if (!query) return true;
   const haystack = searchText(`${item.merchant} ${item.rawMerchant} ${item.category} ${item.date} ${moneyInput(item.amountFils)} ${formatDate(item.date)} ${sourceLabel(item.source)}`);
@@ -1038,23 +1046,33 @@ async function markCommitmentPaid(commitmentId, dueDate) {
   const index = state.commitmentPayments.findIndex((item) => item.commitmentId === commitmentId && sameDueMonth(item.dueDate, dueDate) && item.status !== "reversed");
   if (index >= 0) {
     const [payment] = state.commitmentPayments.splice(index, 1);
-    if (payment.cashDeducted) state.settings.cashFils += payment.amountFils;
-    commit(payment.cashDeducted ? "رجّعت الدفع والمبلغ للرصيد" : "تم التراجع عن تسجيل الدفع", { undo: () => {
+    // نرجّع بالضبط اللي انخصم فعلاً، مو مبلغ الالتزام: لو الرصيد كان أقل انقصّ للصفر وما نخترع الباقي
+    const restoredFils = paymentCashDeductedFils(payment);
+    state.settings.cashFils += restoredFils;
+    commit(restoredFils > 0 ? `رجّعت الدفع و${formatMoney(restoredFils)} للرصيد` : "تم التراجع عن تسجيل الدفع", { undo: () => {
       state.commitmentPayments.splice(index, 0, payment);
-      if (payment.cashDeducted) state.settings.cashFils = Math.max(state.settings.cashFils - payment.amountFils, 0);
+      const again = cashDeduction(state.settings.cashFils, restoredFils);
+      state.settings.cashFils = again.cashAfterFils;
+      if (restoredFils > 0) { payment.cashDeductedFils = again.deductedFils; payment.cashDeducted = again.deductedFils > 0; }
       commit("رجّعت التسجيل");
     } });
     return;
   }
-  const deduct = state.settings.cashFils > 0 &&
-    await askConfirm(`نخصم ${formatMoney(commitment.amountFils)} من رصيدك (${formatMoney(state.settings.cashFils)}) لأنك دفعت ${cutText(commitment.name, 24)}؟`, { okLabel: "اخصم من رصيدي" });
-  const payment = { id: createId(), commitmentId, amountFils: commitment.amountFils, dueDate, paidAt: todayISO(), status: "paid", cashDeducted: deduct };
+  const preview = cashDeduction(state.settings.cashFils, commitment.amountFils);
+  const name = cutText(commitment.name, 24);
+  const deduct = preview.deductedFils > 0 &&
+    await askConfirm(preview.clamped
+      ? `رصيدك (${formatMoney(state.settings.cashFils)}) أقل من ${formatMoney(commitment.amountFils)}. نخصم ${formatMoney(preview.deductedFils)} فقط ويصير رصيدك ${formatMoney(preview.cashAfterFils)} لأنك دفعت ${name}؟`
+      : `نخصم ${formatMoney(commitment.amountFils)} من رصيدك (${formatMoney(state.settings.cashFils)}) لأنك دفعت ${name}؟`, { okLabel: "اخصم من رصيدي" });
+  // نعيد الحساب بعد انتظار التأكيد: الرصيد ممكن يتغير (إشعار بنك مثلاً) والمخزّن لازم يكون اللي انخصم فعلاً
+  const taken = deduct ? cashDeduction(state.settings.cashFils, commitment.amountFils) : { deductedFils: 0, cashAfterFils: state.settings.cashFils };
+  const payment = { id: createId(), commitmentId, amountFils: commitment.amountFils, dueDate, paidAt: todayISO(), status: "paid", cashDeducted: taken.deductedFils > 0, cashDeductedFils: taken.deductedFils };
   state.commitmentPayments.push(payment);
-  if (deduct) state.settings.cashFils = Math.max(state.settings.cashFils - commitment.amountFils, 0);
+  state.settings.cashFils = taken.cashAfterFils;
   if (commitment.recurrence === "once") commitment.status = "completed";
-  commit(deduct ? `سجّلت الدفع وخصمت ${formatMoney(commitment.amountFils)} من رصيدك` : "تم تسجيل الالتزام كمدفوع", { undo: () => {
+  commit(taken.deductedFils > 0 ? `سجّلت الدفع وخصمت ${formatMoney(taken.deductedFils)} من رصيدك` : "تم تسجيل الالتزام كمدفوع", { undo: () => {
     state.commitmentPayments = state.commitmentPayments.filter((item) => item.id !== payment.id);
-    if (deduct) state.settings.cashFils += commitment.amountFils;
+    state.settings.cashFils += taken.deductedFils;
     if (commitment.recurrence === "once") commitment.status = "active";
     commit("رجّعت التسجيل");
   } });
@@ -1078,12 +1096,12 @@ function renderCommitments() {
     ? `${formatDate(summary.nextUpcoming.dueDate)} · ${sameDayLabel(sameDay, "commitment", (item) => formatMoney(item.amountFils))}${sameDay.length > 1 ? ` (${sameDay.map((item) => cutText(item.name, 18)).join("، ")})` : ""}`
     : "ما عندك التزام نشط قادم.");
 
-  const query = $("#commitment-search").value.trim().toLowerCase();
+  const query = searchText($("#commitment-search").value).trim();
   const categoryFilter = $("#commitment-category-filter").value;
   const statusFilter = $("#commitment-status-filter").value;
   const filtered = state.monthlyCommitments.filter((commitment) => {
     const status = commitmentStatusInfo(commitment, today);
-    return (!query || `${commitment.name} ${commitment.category} ${commitment.notes}`.toLowerCase().includes(query)) &&
+    return commitmentMatches(commitment, query) &&
       (categoryFilter === "all" || commitment.category === categoryFilter) &&
       (statusFilter === "all" || status.key === statusFilter);
   }).sort((a, b) => (nextCommitmentOccurrence(a, today)?.dueDate ?? "9999").localeCompare(nextCommitmentOccurrence(b, today)?.dueDate ?? "9999"));
@@ -1245,7 +1263,7 @@ function openAverageDown(holding, buyPriceTenths = null) {
   $("#average-stock-id").value = holding.id;
   setText("#average-stock-name", getKuwaitStock(holding.securityCode)?.name ?? "");
   const position = calculateStockPosition(holding);
-  setText("#average-current-summary", `تملك ${holding.quantity.toLocaleString("ar-KW-u-nu-latn")} سهم · تكلفة السهم مع الرسوم: ${formatSharePrice(position.averageCostPriceTenths)} · آخر سعر مسجل: ${formatSharePrice(holding.currentPriceTenths)}`);
+  setText("#average-current-summary", `تملك ${countLabel(holding.quantity, "stock")} · تكلفة السهم مع الرسوم: ${formatSharePrice(position.averageCostPriceTenths)} · آخر سعر مسجل: ${formatSharePrice(holding.currentPriceTenths)}`);
   $("#average-buy-price").value = stockPriceInput(buyPriceTenths ?? holding.currentPriceTenths);
   $("#average-target-price").value = stockPriceInput(holding.currentPriceTenths);
   $("#average-extra-fees").value = "0.000";
@@ -1339,7 +1357,7 @@ function renderCooling() {
   const previous = select.value;
   select.innerHTML = '<option value="">اختَر السهم</option>' + state.stockHoldings.map(holding => {
     const security = getKuwaitStock(holding.securityCode);
-    return `<option value="${escapeHTML(holding.id)}">${escapeHTML(security.name)} · ${escapeHTML(security.ticker)} · ${holding.quantity.toLocaleString("ar-KW-u-nu-latn")} سهم</option>`;
+    return `<option value="${escapeHTML(holding.id)}">${escapeHTML(security.name)} · ${escapeHTML(security.ticker)} · ${countLabel(holding.quantity, "stock")}</option>`;
   }).join("");
   select.value = state.stockHoldings.some(item => item.id === previous) ? previous : "";
   select.disabled = !state.stockHoldings.length;
@@ -1359,7 +1377,7 @@ function updateCooling(reset = false) {
   }
   const position = calculateStockPosition(holding);
   $("#cooling-current-cost").value = stockPriceInput(position.averageCostPriceTenths);
-  setText("#cooling-position", `الكمية الحالية: ${holding.quantity.toLocaleString("ar-KW-u-nu-latn")} سهم · آخر سعر مسجل: ${formatSharePrice(holding.currentPriceTenths)}`);
+  setText("#cooling-position", `الكمية الحالية: ${countLabel(holding.quantity, "stock")} · آخر سعر مسجل: ${formatSharePrice(holding.currentPriceTenths)}`);
   if (reset) {
     $("#cooling-buy-price").value = stockPriceInput(holding.currentPriceTenths);
     $("#cooling-target-price").value = stockPriceInput(holding.currentPriceTenths);
@@ -1801,10 +1819,13 @@ async function prepareStatementImport(file) {
       ...applyMerchantKnowledge({ merchant: item.rawMerchant || item.merchant, category: item.category }),
       source: "bank-statement", reviewed: true, kind: "expense", createdAt: new Date().toISOString()
     }));
+    // «قد تكون مكررة» ما تنضاف ولا تنحسب إلا إذا علّم عليها المستخدم (v35)؛ ونحفظ عدّاد البصمات وقت المعاينة للحارس الأخير
+    parsed.pickedPossible = new Set();
+    parsed.fingerprintsAtParse = fingerprintCounts(state.transactions);
     pendingStatementBatch = parsed;
+    renderStatementPossible(parsed);
     renderStatementPreview(parsed);
     $("#statement-import-preview").hidden = false;
-    $("#statement-import-confirm").disabled = parsed.transactions.length === 0;
   } catch (error) {
     if (!controller.signal.aborted) $("#statement-import-error").textContent = error instanceof Error ? error.message : "تعذر قراءة الملف.";
   } finally {
@@ -1812,29 +1833,77 @@ async function prepareStatementImport(file) {
   }
 }
 
+/* الصفوف اللي بتنضاف فعلاً: المؤكدة + اللي علّم عليها المستخدم من «قد تكون مكررة». */
+function statementCounted(batch) {
+  return batch.transactions.filter((item, position) => !item.possibleDuplicate || batch.pickedPossible?.has(position));
+}
+
+function fingerprintCounts(list) {
+  const counts = new Map();
+  for (const item of list) {
+    const fingerprint = item.fingerprint || transactionFingerprint({ amountFils: item.amountFils, merchant: item.rawMerchant || item.merchant, date: item.date });
+    counts.set(fingerprint, (counts.get(fingerprint) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function renderStatementPossible(batch) {
+  const possible = batch.transactions.map((item, position) => ({ item, position })).filter(({ item }) => item.possibleDuplicate);
+  $("#statement-possible").hidden = possible.length === 0;
+  $("#statement-possible-list").innerHTML = possible.map(({ item, position }) => `
+    <label class="statement-possible-item"><input type="checkbox" data-possible-index="${position}" ${batch.pickedPossible.has(position) ? "checked" : ""}>
+      <span>${escapeHTML(item.merchant)}<small>${escapeHTML(item.category)} · ${escapeHTML(formatDate(item.date))}</small></span><strong>−${escapeHTML(formatMoney(item.amountFils))}</strong></label>`).join("");
+}
+
 function renderStatementPreview(batch) {
-  const { stats, transactions } = batch;
-  setText("#statement-preview-period", stats.startDate ? `${formatDate(stats.startDate)} — ${formatDate(stats.endDate)}` : "كل المصروفات الموجودة مضافة من قبل");
-  setText("#statement-preview-count", countLabel(transactions.length, "transaction"));
-  setText("#statement-preview-total", formatMoney(stats.totalFils));
-  const possibleCount = stats.possibleDuplicates ?? 0;
-  setText("#statement-match-summary", `طابقت ${stats.duplicates.toLocaleString("ar-KW-u-nu-latn")} عملية موجودة عندك، وناقص ${transactions.length.toLocaleString("ar-KW-u-nu-latn")} بنضيفها${possibleCount ? ` (منها ${possibleCount.toLocaleString("ar-KW-u-nu-latn")} قد تكون مكررة، راجعها)` : ""}.`);
+  const { stats } = batch;
+  const counted = statementCounted(batch);
+  const totalFils = counted.reduce((sum, item) => sum + item.amountFils, 0);
+  const possibleTotal = stats.possibleDuplicates ?? 0;
+  setText("#statement-preview-period", counted.length ? `${formatDate(counted[0].date)} — ${formatDate(counted.at(-1).date)}` : possibleTotal ? "ما في مصروفات مؤكدة جديدة" : "كل المصروفات الموجودة مضافة من قبل");
+  setText("#statement-preview-count", countLabel(counted.length, "transaction"));
+  setText("#statement-preview-total", formatMoney(totalFils));
+  setText("#statement-match-summary", `طابقت ${stats.duplicates.toLocaleString("ar-KW-u-nu-latn")} من عملياتك المحفوظة، وناقص ${counted.length.toLocaleString("ar-KW-u-nu-latn")} بنضيفها${possibleTotal ? ` (و${possibleTotal.toLocaleString("ar-KW-u-nu-latn")} قد تكون مكررة، ما تنضاف إلا إذا علّمت عليها)` : ""}.`);
   setText("#statement-preview-duplicates", stats.duplicates.toLocaleString("ar-KW-u-nu-latn"));
   setText("#statement-preview-excluded", `${(stats.credits + stats.transfers).toLocaleString("ar-KW-u-nu-latn")}${stats.transfersFils ? ` · منها مصروفات مستبعدة ${formatMoney(stats.transfersFils)}` : ""}`);
   setText("#statement-preview-skipped", (stats.invalidRows + stats.outOfRange).toLocaleString("ar-KW-u-nu-latn"));
-  setText("#statement-preview-possible", (stats.possibleDuplicates ?? 0).toLocaleString("ar-KW-u-nu-latn"));
-  setText("#statement-preview-note", stats.hasBalanceColumn
+  const picked = batch.pickedPossible?.size ?? 0;
+  setText("#statement-preview-possible", `${possibleTotal.toLocaleString("ar-KW-u-nu-latn")}${picked ? ` · معلّمة ${picked.toLocaleString("ar-KW-u-nu-latn")}` : ""}`);
+  setText("#statement-possible-hint", `ما انضافت ولا انحسبت. علّم على اللي تبيه فعلاً (مجموعها ${formatMoney(stats.possibleFils ?? 0)}).`);
+  setText("#statement-possible-all", picked && picked === possibleTotal ? "إلغاء التحديد" : "تحديد الكل");
+  const repeated = stats.repeatedInFile ? ` ${countLabel(stats.repeatedInFile, "transaction")} متكررة داخل الملف نفسه (نفس اليوم والمبلغ والوصف) اعتبرناها مشتريات حقيقية.` : "";
+  setText("#statement-preview-note", (stats.hasBalanceColumn
     ? "الملف فيه عمود الرصيد، فالمقارنة بالرصيد بعد العملية تفرّق بين شراءين متشابهين في نفس اليوم."
-    : "ما فيه عمود رصيد في الملف، فالعمليتان المتشابهتان في نفس اليوم وبنفس المبلغ تظهران «قد تكون مكررة» لمراجعتك.");
-  $("#statement-preview-list").innerHTML = transactions.slice(-12).reverse().map((item) => `
+    : "ما فيه عمود رصيد في الملف، فنقارن بالعدد: لو الملف فيه صفين متطابقين وعندك واحد مثلهم نضيف الثاني فقط، وما نشيل أي شراء حقيقي.") + repeated);
+  $("#statement-preview-list").innerHTML = counted.slice(-12).reverse().map((item) => `
     <div class="statement-preview-item"><span>${escapeHTML(item.merchant)}<small>${escapeHTML(item.category)} · ${escapeHTML(formatDate(item.date))}</small></span><strong>−${escapeHTML(formatMoney(item.amountFils))}</strong></div>`).join("");
+  $("#statement-import-confirm").disabled = counted.length === 0;
+}
+
+function toggleStatementPossible(position, checked) {
+  const batch = pendingStatementBatch;
+  if (!batch?.transactions[position]?.possibleDuplicate) return;
+  if (checked) batch.pickedPossible.add(position); else batch.pickedPossible.delete(position);
+  renderStatementPreview(batch);
 }
 
 function submitStatementImport(event) {
   event.preventDefault();
-  if (!pendingStatementBatch) return;
-  const known = new Set(state.transactions.map((item) => item.fingerprint || transactionFingerprint({ amountFils: item.amountFils, merchant: item.rawMerchant || item.merchant, date: item.date })));
-  const transactions = pendingStatementBatch.transactions.filter((item) => !known.has(item.fingerprint));
+  const batch = pendingStatementBatch;
+  if (!batch) return;
+  // الحارس الأخير: نحذف فقط الصفوف اللي ظهر لها مثيل جديد بعد المعاينة (إشعار بنك مثلاً). المقارنة بالعدد، مو بالوجود،
+  // لأن الصف الثالث من 3 متطابقة وعندك اثنتان هو شراء حقيقي له نفس بصمة الاثنتين.
+  const appeared = new Map();
+  for (const [fingerprint, count] of fingerprintCounts(state.transactions)) {
+    const extra = count - (batch.fingerprintsAtParse?.get(fingerprint) ?? 0);
+    if (extra > 0) appeared.set(fingerprint, extra);
+  }
+  const picked = statementCounted(batch).filter((item) => item.possibleDuplicate).length;
+  const transactions = statementCounted(batch).filter((item) => {
+    const left = appeared.get(item.fingerprint) ?? 0;
+    if (left > 0) { appeared.set(item.fingerprint, left - 1); return false; }
+    return true;
+  }).map((item) => item.possibleDuplicate ? { ...item, possibleDuplicate: false } : item);
   if (!transactions.length) {
     $("#statement-import-error").textContent = "كل العمليات الجديدة صارت موجودة من قبل؛ ما كررناها.";
     return;
@@ -1862,10 +1931,8 @@ function submitStatementImport(event) {
   switchView("dashboard");
   $("#behavior-panel").closest("details").open = true;
   requestAnimationFrame(() => $("#behavior-panel").scrollIntoView({ behavior: "smooth", block: "start" }));
-  const possible = transactions.filter((item) => item.possibleDuplicate).length;
-  commit(possible
-    ? `استوردت ${countLabel(transactions.length, "transaction")} · ${countLabel(possible, "transaction")} علّمتها «قد تكون مكررة» لمراجعتك`
-    : `طابقت ${(matchedCount).toLocaleString("ar-KW-u-nu-latn")} موجودة وأضفت ${countLabel(transactions.length, "transaction")} ناقصة`, { render: false });
+  const matched = matchedCount.toLocaleString("ar-KW-u-nu-latn");
+  commit(`طابقت ${matched} من عملياتك المحفوظة وأضفت ${transactions.length.toLocaleString("ar-KW-u-nu-latn")} ناقصة${picked ? ` · منها ${countLabel(picked, "transaction")} كانت «قد تكون مكررة» وعلّمت عليها بنفسك` : ""}`, { render: false });
 }
 
 const INCOME_CATEGORIES = ["راتب", "أخرى"];
@@ -2126,12 +2193,21 @@ async function submitLoan(event) {
 }
 
 /* F17: ما كان فيه أي طريقة تسجّل خصم القسط، فالرصيد يبقى قديماً والأقساط المتبقية ما تنقص. */
-function payLoanInstallment(loanId, dueDate) {
-  const loan = state.loans.find((item) => item.id === loanId);
+async function payLoanInstallment(loanId, dueDate) {
+  let loan = state.loans.find((item) => item.id === loanId);
   if (!loan || !validDate(dueDate)) return;
-  if (state.debtPayments.some((item) => item.debtId === loanId && sameDueMonth(item.dueDate, dueDate) && item.status !== "reversed")) {
+  const alreadyPaid = () => state.debtPayments.some((item) => item.debtId === loanId && sameDueMonth(item.dueDate, dueDate) && item.status !== "reversed");
+  if (alreadyPaid()) {
     toast("القسط مسجّل مدفوعاً من قبل");
     return;
+  }
+  // لمسة ثانية بعد تسجيل قسط هذا الشهر كانت تسجّل قسط الشهر الجاي بصمت: نسأل، والافتراضي ما نسجّل (F17)
+  const recent = recentInstallmentPayment(state.debtPayments, loanId, todayISO(), dueDate);
+  if (recent) {
+    const confirmed = await askConfirm(`قسط ${formatDate(recent.dueDate)} مسجّل مدفوع من قبل. تسجّل قسط ${formatDate(dueDate)} كمان؟ إذا لمستها مرتين بالغلط اضغط إلغاء.`, { okLabel: "سجّل القسط التالي" });
+    if (!confirmed) return;
+    loan = state.loans.find((item) => item.id === loanId);
+    if (!loan || alreadyPaid()) return;
   }
   const applied = Math.min(loan.installmentFils, loan.balanceFils);
   const payment = { id: createId(), debtId: loanId, amountFils: loan.installmentFils, dueDate, paidAt: todayISO(), status: "paid" };
@@ -2400,7 +2476,7 @@ async function scanLoanScreenshots(files) {
       });
       const preparedImage = await prepareOCRImage(selected[index]);
       const result = await worker.recognize(preparedImage);
-      scannedLoanCandidates.push(...parseLoanOCRLoans(result?.data?.text ?? "", scannedLoanCandidates.length));
+      scannedLoanCandidates.push(...parseLoanOCRLoans(result?.data?.text ?? "", scannedLoanCandidates.length).filter(hasScanSignal));
     }
     if (!scannedLoanCandidates.length) {
       // قراءة فاضية ما تعني نجاحاً: نقول السبب بدل ما نفتح شاشة مراجعة خالية (F59)
@@ -2714,11 +2790,11 @@ function handlePortfolioLink() {
     switchView("investment");
     $("#portfolio-import-list").innerHTML = pendingPortfolioImport.map(item => {
       const security = getKuwaitStock(item.securityCode);
-      return `<article class="data-card"><h3>${escapeHTML(security.name)} · ${escapeHTML(security.ticker)}</h3><p>${item.quantity.toLocaleString("ar-KW-u-nu-latn")} سهم · متوسط التكلفة ${escapeHTML(formatSharePrice(item.purchasePriceTenths))} · السعر بالصورة ${escapeHTML(formatSharePrice(item.currentPriceTenths))}</p></article>`;
+      return `<article class="data-card"><h3>${escapeHTML(security.name)} · ${escapeHTML(security.ticker)}</h3><p>${countLabel(item.quantity, "stock")} · متوسط التكلفة ${escapeHTML(formatSharePrice(item.purchasePriceTenths))} · السعر بالصورة ${escapeHTML(formatSharePrice(item.currentPriceTenths))}</p></article>`;
     }).join("");
     const count = newPortfolioHoldings(state.stockHoldings, pendingPortfolioImport).length;
     $("#portfolio-import-save").disabled = count === 0 || !storageAvailable;
-    setText("#portfolio-import-status", !storageAvailable ? "التخزين غير متاح؛ افتح الرابط في Safari لحفظ الأسهم." : count ? `جاهز لإضافة ${count.toLocaleString("ar-KW-u-nu-latn")} أسهم. الأسهم الموجودة عندك لن تتغير.` : "هالأسهم موجودة عندك بالفعل؛ ما راح نكررها.");
+    setText("#portfolio-import-status", !storageAvailable ? "التخزين غير متاح؛ افتح الرابط في Safari لحفظ الأسهم." : count ? `جاهز لإضافة ${countLabel(count, "stock")}. الأسهم الموجودة عندك لن تتغير.` : "هالأسهم موجودة عندك بالفعل؛ ما راح نكررها.");
     openDialog($("#portfolio-import-dialog"));
   } catch {
     history.replaceState(null, "", "#investment");
@@ -3388,6 +3464,19 @@ function bindEvents() {
   $("#bank-text").addEventListener("input", () => { $("#bank-error").textContent = ""; renderBankPreview(); });
   $("#statement-file").addEventListener("change", (event) => prepareStatementImport(event.target.files?.[0]));
   $("#statement-import-form").addEventListener("submit", submitStatementImport);
+  $("#statement-possible-list").addEventListener("change", (event) => {
+    const position = Number(event.target.dataset?.possibleIndex);
+    if (Number.isInteger(position)) toggleStatementPossible(position, event.target.checked);
+  });
+  $("#statement-possible-all").addEventListener("click", () => {
+    const batch = pendingStatementBatch;
+    if (!batch) return;
+    const positions = batch.transactions.map((item, position) => item.possibleDuplicate ? position : -1).filter((position) => position >= 0);
+    const all = positions.every((position) => batch.pickedPossible.has(position));
+    batch.pickedPossible = new Set(all ? [] : positions);
+    renderStatementPossible(batch);
+    renderStatementPreview(batch);
+  });
   $("#statement-import-dialog").addEventListener("close", () => {
     pendingStatementBatch = null;
     $("#statement-file").value = "";
@@ -3463,7 +3552,8 @@ function bindEvents() {
     const editId = event.target.dataset.editCommitment;
     const deleteId = event.target.dataset.deleteCommitment;
     const toggleId = event.target.dataset.toggleCommitment;
-    const paidId = event.target.dataset.toggleCommitmentPaid;
+    const paidButton = event.target.closest("[data-toggle-commitment-paid]");
+    const paidId = paidButton?.dataset.toggleCommitmentPaid;
     if (editId) openCommitment(state.monthlyCommitments.find((item) => item.id === editId));
     if (deleteId) removeRecord("monthlyCommitments", deleteId, "الالتزام");
     if (toggleId) {
@@ -3473,7 +3563,7 @@ function bindEvents() {
         saveState(); renderAll(); toast(commitment.status === "active" ? "تمت إعادة تفعيل الالتزام" : "تم إيقاف الالتزام مؤقتاً");
       }
     }
-    if (paidId) markCommitmentPaid(paidId, event.target.dataset.dueDate);
+    if (paidId) markCommitmentPaid(paidId, paidButton.dataset.dueDate);
   });
   $("#loan-list").addEventListener("click", (event) => {
     const editId = event.target.dataset.editLoan;

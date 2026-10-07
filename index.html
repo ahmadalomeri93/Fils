@@ -173,6 +173,7 @@
 
     <section class="view" id="loans-view" data-view="loans">
       <div class="page-title"><div><span class="eyebrow">خطة السداد</span><h1>القروض والأقساط</h1></div><div class="row wrap"><button class="secondary" data-action="scan-loans">رفع صور</button><button class="primary" data-action="new-loan">＋ قرض</button></div></div>
+      <div id="loan-empty" class="empty-state" hidden><span>▤</span><h2>ما أضفت قروض بعد</h2><p>صوّر صفحة القروض والأقساط من تطبيق البنك، وفلس يقرأها ويجهزها للمراجعة.</p><div class="row wrap"><button class="primary" data-action="scan-loans">رفع الصور</button><button class="secondary" data-action="new-loan">إدخال يدوي</button></div></div>
       <div class="metric-grid debt-metrics">
         <article class="metric featured"><span>إجمالي الديون المتبقية</span><strong id="loans-total">0.000 د.ك</strong></article>
         <article class="metric"><span>الأقساط الشهرية</span><strong id="installments-total">0.000 د.ك</strong></article>
@@ -196,7 +197,6 @@
         <p class="hint">يُطبق الرقم على كل قرض بشكل مستقل للمقارنة، وليس توزيعاً تلقائياً بين القروض.</p>
       </section>
       <div id="loan-list" class="card-list"></div>
-      <div id="loan-empty" class="empty-state" hidden><span>▤</span><h2>ما أضفت قروض بعد</h2><p>صوّر صفحة القروض والأقساط من تطبيق البنك، وفلس يقرأها ويجهزها للمراجعة.</p><div class="row wrap"><button class="primary" data-action="scan-loans">رفع الصور</button><button class="secondary" data-action="new-loan">إدخال يدوي</button></div></div>
       <p class="legal-note">الحساب تقديري. رسوم البنك وشروط التسوية المبكرة غير مشمولة؛ عرض البنك هو المرجع.</p>
     </section>
 
@@ -381,7 +381,7 @@
     <div class="dialog-heading"><h2>المزيد</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
     <div class="more-menu">
       <button type="button" data-action="open-onboarding"><span>✦</span><strong>رتّب لي كل شي</strong><small>3 أسئلة وأضبط لك الخطة</small></button>
-      <button type="button" data-target="advisor"><span>✦</span><strong>المستشار</strong><small>خطة الراتب واسأل المحاسب</small></button>
+      <button type="button" data-target="advisor"><span>❖</span><strong>المستشار</strong><small>خطة الراتب واسأل المحاسب</small></button>
       <button type="button" data-target="investment"><span>↗</span><strong>الاستثمار</strong><small>محفظة الأسهم</small></button>
       <button type="button" data-target="gold"><span>◈</span><strong>محفظة الذهب</strong><small>مشترياتك وسعر اليوم ومتى تشتري</small></button>
       <button type="button" data-target="spending"><span>◔</span><strong>المصروف والميزانية</strong><small>الفعلي مقابل الميزانية</small></button>
@@ -452,6 +452,10 @@
           <div><span>قد تكون مكررة</span><strong id="statement-preview-possible">0</strong></div>
         </div>
         <p class="hint" id="statement-preview-note"></p>
+        <div id="statement-possible" class="statement-possible" hidden>
+          <div class="statement-possible-head"><div><strong>قد تكون مكررة</strong><small id="statement-possible-hint"></small></div><button type="button" class="secondary" id="statement-possible-all">تحديد الكل</button></div>
+          <div id="statement-possible-list" class="statement-possible-list"></div>
+        </div>
         <div id="statement-preview-list" class="statement-preview-list"></div>
         <p class="hint">التصنيف الآلي اقتراح أولي؛ تقدر تعدل تصنيف أي عملية بعد الاستيراد من صفحة العمليات.</p>
       </section>

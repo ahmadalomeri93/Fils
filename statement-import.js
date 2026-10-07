@@ -113,10 +113,15 @@ function merchantTokens(text) {
   return merchantKey(text).split(/\s+/).filter(Boolean);
 }
 
+/* فرق المسافات وحده ما يغيّر الوصف: «Ooredoo-66341327 بنك» و«Ooredoo-66341327بنك» نفس العملية (8 من 9 «مكررة» كانت كذا). */
+const squashed = (text) => merchantKey(text).replace(/\s+/g, "");
+
 export function sameMerchantWords(a, b) {
   const first = merchantTokens(a);
   const second = merchantTokens(b);
   if (!first.length || !second.length) return false;
+  const squashedFirst = squashed(a);
+  if (squashedFirst && squashedFirst === squashed(b)) return true;
   const counts = new Map();
   for (const token of second) counts.set(token, (counts.get(token) ?? 0) + 1);
   let shared = 0;
@@ -219,9 +224,10 @@ export function parseBankStatement({ text, filename = "statement.csv", todayISO,
   }
 
   const cutoffISO = monthStartISO(todayISO, 11);
-  const totals = { sourceRows: rows.length, invalidRows: 0, outOfRange: 0, credits: 0, transfers: 0, transfersFils: 0, duplicates: 0, possibleDuplicates: 0 };
+  const totals = { sourceRows: rows.length, invalidRows: 0, outOfRange: 0, credits: 0, transfers: 0, transfersFils: 0, duplicates: 0, possibleDuplicates: 0, repeatedInFile: 0 };
   const candidates = [];
   const seen = new Set();
+  const seenNoBalance = new Set();
   const index = existingIndex(existingTransactions);
   for (const row of rows.slice(0, maxRows)) {
     const date = parseDate(row[dateIndex]);
@@ -258,8 +264,15 @@ export function parseBankStatement({ text, filename = "statement.csv", todayISO,
 
     const balanceFils = balanceIndex >= 0 ? parseAmount(row[balanceIndex]).amountFils : 0;
     const candidate = buildCandidate({ date, description, amountFils, balanceFils, index });
-    if (candidate.duplicate || seen.has(candidate.fingerprint)) { totals.duplicates += 1; continue; }
-    seen.add(candidate.fingerprint);
+    /* مع عمود الرصيد: نفس التاريخ والمبلغ والرصيد = نفس الحركة. بدونه: الصف المتكرر داخل الملف الواحد
+       شراء حقيقي (TALABAT 5.800 مرتين)، والمقارنة بالموجود عندك تتم بالعدد: M في الملف و N عندك → نضيف max(0, M−N). */
+    if (candidate.duplicate || (balanceFils && seen.has(candidate.fingerprint))) { totals.duplicates += 1; continue; }
+    if (balanceFils) seen.add(candidate.fingerprint);
+    else {
+      const repeat = `${date}|${amountFils}|${merchantKey(candidate.rawMerchant)}`;
+      if (seenNoBalance.has(repeat)) totals.repeatedInFile += 1;
+      seenNoBalance.add(repeat);
+    }
     delete candidate.duplicate;
     if (candidate.possibleDuplicate) totals.possibleDuplicates += 1;
     candidates.push(candidate);
@@ -267,14 +280,17 @@ export function parseBankStatement({ text, filename = "statement.csv", todayISO,
   if (rows.length > maxRows) totals.invalidRows += rows.length - maxRows;
   if (!candidates.length && totals.duplicates === 0) throw new Error("ما لقيت مصروفات جديدة خلال آخر 12 شهر. تأكد من نوع الملف والفترة.");
   candidates.sort((a, b) => a.date.localeCompare(b.date) || a.merchant.localeCompare(b.merchant));
+  /* صفوف «قد تكون مكررة» تبقى بالقائمة لكن ما تنحسب بالعدد والمجموع والفترة؛ المستخدم هو اللي يعلّم اللي يبي يضيفه (v35) */
+  const counted = candidates.filter((item) => !item.possibleDuplicate);
   return {
     transactions: candidates,
     stats: {
       ...totals,
-      newCount: candidates.length,
-      totalFils: candidates.reduce((sum, item) => sum + item.amountFils, 0),
-      startDate: candidates[0]?.date ?? "",
-      endDate: candidates.at(-1)?.date ?? "",
+      newCount: counted.length,
+      totalFils: counted.reduce((sum, item) => sum + item.amountFils, 0),
+      possibleFils: candidates.filter((item) => item.possibleDuplicate).reduce((sum, item) => sum + item.amountFils, 0),
+      startDate: counted[0]?.date ?? "",
+      endDate: counted.at(-1)?.date ?? "",
       hasBalanceColumn: balanceIndex >= 0,
       cutoffISO
     }

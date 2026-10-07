@@ -1,4 +1,4 @@
-import { formatMoney, moneyInput, parseCount, parseMoney } from "./finance-core.js";
+import { countLabel, formatMoney, moneyInput, parseCount, parseMoney } from "./finance-core.js";
 import { monthlySurplus } from "./financial-engine.js";
 
 const dinar = (fils) => Math.round(fils / 1000) * 1000;
@@ -75,7 +75,7 @@ export function mountOnboarding(root, { getSettings, getFixedFils = () => 0, onA
           <div><span>هامش أمان ما تلمسه</span><strong>${esc(formatMoney(plan.safetyBufferFils))}</strong></div>
           <div class="advisor-budget-total"><span>هدف صندوق الطوارئ (3 شهور)</span><strong>${esc(formatMoney(plan.emergencyTargetFils))}</strong></div>
         </div>
-        <p class="hint">${plan.monthsToTarget === 0 ? "وصلت هدف الطوارئ أصلاً." : plan.monthsToTarget === null ? "" : `إذا وفّرت المبلغ كل شهر توصل لهدف الطوارئ بعد حوالي ${num(plan.monthsToTarget)} شهر.`}
+        <p class="hint">${plan.monthsToTarget === 0 ? "وصلت هدف الطوارئ أصلاً." : plan.monthsToTarget === null ? "" : `إذا وفّرت المبلغ كل شهر توصل لهدف الطوارئ بعد حوالي ${countLabel(plan.monthsToTarget, "month")}.`}
         ${plan.fixedFils > 0
           ? `حسبتها بعد أقساطك والتزاماتك المسجلة (${esc(formatMoney(plan.fixedFils))} شهرياً): من الباقي ${esc(formatMoney(plan.spendableFils))} 70٪ مصروف، 20٪ ادخار، 10٪ أمان. وهدف الطوارئ يغطي 3 شهور من المصروف والالتزامات.`
           : "هذي أرقام مبدئية (70٪ مصروف، 20٪ ادخار، 10٪ أمان)، وتقدر تعدلها من الإعدادات. القروض والأقساط أضفها من «المزيد» ليصير الحساب أدق."}</p>`,

@@ -90,6 +90,32 @@ function occurrencePaid(payments, entityKey, entityId, dueDate) {
   return payments.some((payment) => payment?.[entityKey] === entityId && sameDueMonth(payment?.dueDate, dueDate) && payment?.status !== "reversed");
 }
 
+/* الخصم من الرصيد النقدي ما يصير سالباً: لو الدفعة أكبر من الرصيد ينخصم الموجود فقط (deductedFils)،
+   وهذا بالذات اللي يتخزّن على الدفعة ويرجع عند التراجع أو إلغاء التسجيل — وإلا نخترع رصيداً ما كان موجوداً. */
+export function cashDeduction(cashFils, amountFils) {
+  const cash = validFils(cashFils) ? cashFils : 0;
+  const amount = validFils(amountFils) ? amountFils : 0;
+  const deductedFils = Math.min(cash, amount);
+  return { deductedFils, cashAfterFils: cash - deductedFils, clamped: deductedFils < amount };
+}
+
+/* المبلغ اللي انخصم فعلاً من الرصيد لهذه الدفعة. الدفعات المحفوظة قبل v35 فيها العلامة cashDeducted فقط،
+   فنعتبر أنها خصمت كامل المبلغ (نفس السلوك القديم). */
+export function paymentCashDeductedFils(payment) {
+  if (!payment) return 0;
+  const amount = validFils(payment.amountFils) ? payment.amountFils : 0;
+  if (validFils(payment.cashDeductedFils)) return Math.min(payment.cashDeductedFils, amount);
+  return payment.cashDeducted === true ? amount : 0;
+}
+
+/* قسط القرض المسجّل هذا الشهر (حسب موعده أو يوم تسجيله) لما المستخدم يسجّل قسط شهر ثاني بعده مباشرة:
+   اللمسة الثانية كانت تسجّل قسط الشهر الجاي بصمت (F17). نرجّع الدفعة المسجلة عشان نسأل قبل التسجيل. */
+export function recentInstallmentPayment(payments = [], debtId, todayISO, dueDate) {
+  return payments.find((payment) => payment?.debtId === debtId && payment?.status !== "reversed" &&
+    !sameDueMonth(payment?.dueDate, dueDate) &&
+    (sameDueMonth(payment?.dueDate, todayISO) || sameDueMonth(payment?.paidAt, todayISO))) ?? null;
+}
+
 export function commitmentOccurrences(commitments = [], { fromISO, toISO, payments = [], includePaused = false } = {}) {
   const from = parseISO(fromISO);
   const to = parseISO(toISO);
@@ -391,6 +417,11 @@ export function monthlySurplus({ incomeFils = 0, debtPaymentsFils = 0, commitmen
   };
 }
 
+/* توقع نهاية الشهر بنفس منطق «المتاح الآمن» (v35):
+   + المعاش إذا يوم نزوله لسه قدّام هذا الشهر (المعاش ينزل ومعاه تنزل مستحقات يومه، فنحسب الاثنين)،
+   − الأقساط والالتزامات غير المدفوعة من أول الشهر (المتأخر يُحجز كما في المتاح الآمن)،
+   − دفعات البطاقات المحجوزة مرة وحدة، والتزامات البطاقة (Netflix مثلاً) داخلة فيها فلا تُحجز مرة ثانية،
+   − الصرف اليومي المتوقع للأيام الباقية. الناتج دائماً «تقديري». */
 export function endOfMonthForecast({
   availableCashFils = 0,
   transactions = [],
@@ -399,6 +430,8 @@ export function endOfMonthForecast({
   commitments = [],
   commitmentPayments = [],
   reservedCreditCardFils = 0,
+  incomeFils = 0,
+  salaryDay = null,
   todayISO
 } = {}) {
   const bounds = monthBounds(todayISO);
@@ -419,19 +452,33 @@ export function endOfMonthForecast({
   }
   const daysRemaining = Math.max(bounds.daysInMonth - bounds.dayOfMonth, 0);
   const projectedSpendingFils = averageDailyFils * daysRemaining;
-  const debtDue = debtOccurrences(debts, { fromISO: addDaysISO(todayISO, 1), toISO: bounds.endISO, payments: debtPayments }).filter((item) => !item.paid);
-  const commitmentDue = commitmentOccurrences(commitments, { fromISO: addDaysISO(todayISO, 1), toISO: bounds.endISO, payments: commitmentPayments }).filter((item) => !item.paid);
+  const cardReserveFils = validFils(reservedCreditCardFils) ? reservedCreditCardFils : 0;
+  const cardCovered = (item) => cardReserveFils > 0 && item.paymentMethod === "credit_card";
+  const debtDue = debtOccurrences(debts, { fromISO: bounds.startISO, toISO: bounds.endISO, payments: debtPayments }).filter((item) => !item.paid);
+  const allCommitmentDue = commitmentOccurrences(commitments, { fromISO: bounds.startISO, toISO: bounds.endISO, payments: commitmentPayments }).filter((item) => !item.paid);
+  const commitmentDue = allCommitmentDue.filter((item) => !cardCovered(item));
   const upcomingDebtFils = debtDue.reduce((sum, item) => sum + item.installmentFils, 0);
   const upcomingCommitmentsFils = commitmentDue.reduce((sum, item) => sum + item.amountFils, 0);
-  const forecastAvailableFils = availableCashFils - projectedSpendingFils - upcomingDebtFils - upcomingCommitmentsFils - Math.max(reservedCreditCardFils, 0);
+  const cardCommitmentsFils = allCommitmentDue.filter(cardCovered).reduce((sum, item) => sum + item.amountFils, 0);
+  // المعاش يُحسب فقط إذا يوم نزوله بعد اليوم وقبل نهاية الشهر؛ لو نزل أو يوم نزوله اليوم فهو أصلاً داخل الرصيد
+  const paydayThisMonth = Number.isInteger(salaryDay) && salaryDay >= 1 && salaryDay <= 31
+    ? toISO(clampedDate(Number(todayISO.slice(0, 4)), Number(todayISO.slice(5, 7)) - 1, salaryDay)) : "";
+  const salaryDateISO = paydayThisMonth && paydayThisMonth > todayISO && paydayThisMonth <= bounds.endISO ? paydayThisMonth : "";
+  const salaryFils = salaryDateISO && validFils(incomeFils) ? incomeFils : 0;
+  const forecastAvailableFils = availableCashFils + salaryFils - projectedSpendingFils - upcomingDebtFils - upcomingCommitmentsFils - cardReserveFils;
   return {
     sufficient: true,
+    availableCashFils,
     actualSpentFils,
     averageDailyFils,
     daysRemaining,
     projectedSpendingFils,
     upcomingDebtFils,
     upcomingCommitmentsFils,
+    cardCommitmentsFils,
+    reservedCreditCardFils: cardReserveFils,
+    salaryFils,
+    salaryDateISO,
     forecastAvailableFils,
     basis,
     label: "تقديري"
@@ -537,13 +584,13 @@ export function generateFinancialAlerts({
   const debtDue = debtOccurrences(debts, { fromISO: todayISO, toISO: weekEnd, payments: debtPayments }).filter((item) => !item.paid);
   debtDue.forEach((item) => {
     const days = daysBetween(todayISO, item.dueDate);
-    alerts.push({ key: `debt:${item.debtId}:${item.dueDate}`, type: "debt_due", severity: days <= 2 ? "warning" : "info", title: `قسط قريب: ${item.name}`, message: `موعده بعد ${days} يوم.`, amountFils: item.installmentFils, dueDate: item.dueDate });
+    alerts.push({ key: `debt:${item.debtId}:${item.dueDate}`, type: "debt_due", severity: days <= 2 ? "warning" : "info", title: `قسط قريب: ${item.name}`, message: days === 0 ? "موعده اليوم." : `موعده بعد ${countLabel(days, "day")}.`, amountFils: item.installmentFils, dueDate: item.dueDate });
   });
   const commitmentDue = commitmentOccurrences(commitments, { fromISO: todayISO, toISO: weekEnd, payments: commitmentPayments }).filter((item) => !item.paid);
   if (commitmentDue.length) {
     const amountFils = commitmentDue.reduce((sum, item) => sum + item.amountFils, 0);
     const key = `commitments:${commitmentDue.map((item) => `${item.commitmentId}-${item.dueDate}`).join("|")}`;
-    alerts.push({ key, type: "commitments_due", severity: "info", title: "التزامات هذا الأسبوع", message: `عندك ${commitmentDue.length} التزام خلال 7 أيام.`, amountFils, dueDate: commitmentDue[0].dueDate });
+    alerts.push({ key, type: "commitments_due", severity: "info", title: "التزامات هذا الأسبوع", message: `عندك ${countLabel(commitmentDue.length, "commitment")} خلال 7 أيام.`, amountFils, dueDate: commitmentDue[0].dueDate });
   }
   const bounds = monthBounds(todayISO);
   const monthSpent = bounds ? reviewedExpenses(transactions).filter((item) => item.date >= bounds.startISO && item.date <= todayISO).reduce((sum, item) => sum + item.amountFils, 0) : 0;
@@ -551,7 +598,8 @@ export function generateFinancialAlerts({
     alerts.push({ key: `${bounds?.startISO}:budget-80`, type: "budget", severity: monthSpent > budgetFils ? "danger" : "warning", title: "ميزانية الشهر", message: `استخدمت ${Math.round(monthSpent / budgetFils * 100)}٪ من ميزانيتك.`, amountFils: monthSpent });
   }
   if (forecast?.sufficient && forecast.forecastAvailableFils < 0) {
-    alerts.push({ key: `${bounds?.startISO}:forecast-shortfall`, type: "forecast", severity: "danger", title: "تنبيه مسار الصرف", message: "حسب معدل صرفك الحالي قد ينفد المتاح قبل نهاية الشهر.", amountFils: Math.abs(forecast.forecastAvailableFils) });
+    // توقع تقديري من متوسط صرف، مو واقعة حصلت: تنبيه أصفر لا أحمر، والرقم هو العجز المحسوب بعد المعاش وبدون حجز مكرر (v35)
+    alerts.push({ key: `${bounds?.startISO}:forecast-shortfall`, type: "forecast", severity: "warning", title: "تنبيه مسار الصرف", message: "تقدير من متوسط صرفك: قد ينقص المتاح قبل نهاية الشهر.", amountFils: Math.abs(forecast.forecastAvailableFils) });
   }
   const comparison = spendingComparison(transactions, todayISO);
   if (comparison?.previousFils > 0 && Math.abs(comparison.percent) >= 10) {

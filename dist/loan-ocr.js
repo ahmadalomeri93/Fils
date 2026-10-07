@@ -184,6 +184,12 @@ export function parseLoanOCRLoans(rawText, startIndex = 0) {
   });
 }
 
+/* F59: صورة بدون أي نص مقروء (تدرّج لوني مثلاً) كانت تفتح شاشة مراجعة فاضية «أكمل البيانات».
+   المرشّح لازم يحمل أي إشارة: اسم أو جهة أو مبلغ أو تاريخ أو يوم استحقاق، وإلا نقول «ما لقيت بيانات قرض». */
+export function hasScanSignal(loan = {}) {
+  return Boolean(loan.name || loan.lender || loan.balanceFils || loan.installmentFils || loan.originalAmountFils || loan.dueDay || loan.startDate || loan.endDate);
+}
+
 /* F20: القراءة من صورة ممكن تطلع رقم ناقص («8.000» بدل «12,345.678»). ما نغيّر الرقم،
    بس ما نكتب «مقروء» جنب رقم غير منطقي: مبلغ أقل من 10 د.ك، أو قسط أكبر من الرصيد. */
 export function scanAmountWarnings(loan = {}) {
