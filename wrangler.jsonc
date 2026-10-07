@@ -1,0 +1,6 @@
+// نشر تلقائي على Cloudflare Workers (ملفات ثابتة فقط) من مجلد dist
+{
+  "name": "broken-queen-f0ed",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./dist" }
+}

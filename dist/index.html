@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1f3a">
+  <meta name="description" content="فلس — مصاريفك، أقساطك، واستثمارك في مكان واحد.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="فلس">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; connect-src 'self' https://api.gold-api.com; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23101b36'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%23d5ff45' stroke='%23f0ff9a' stroke-width='3'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='34' font-family='Arial' font-weight='700' fill='%23081126'%3E%D9%81%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <title>فلس — كل فلس له حساب</title>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img src="icons/fils-mark.svg" width="48" height="48" alt="شعار فلس">
+      <div><strong>فلس</strong><span>كل فلس له حساب</span></div>
+    </div>
+    <button class="icon-button" id="settings-button" aria-label="فتح الإعدادات" title="الإعدادات">⚙︎</button>
+  </header>
+
+  <main id="app-main">
+    <aside class="notice warning backup-card" id="backup-reminder" hidden>
+      <p id="backup-reminder-text"></p>
+      <div class="row"><button type="button" class="small primary" id="backup-export">تصدير نسخة الحين</button><button type="button" class="small ghost" id="backup-snooze">بعد ٣ أيام</button></div>
+    </aside>
+    <aside class="install-card" id="install-card" hidden>
+      <div><strong>ثبّت فلس على آيفونك</strong><p id="install-copy">افتح قائمة المشاركة في Safari ثم اختر «إضافة إلى الشاشة الرئيسية».</p></div>
+      <div class="row"><button class="small primary" id="install-button" hidden>تثبيت</button><button class="small ghost" id="dismiss-install">لاحقاً</button></div>
+    </aside>
+
+    <section class="view active" id="dashboard-view" data-view="dashboard">
+      <div class="hero-card copper-glow">
+        <div>
+          <span class="eyebrow">المتاح الآمن للصرف</span>
+          <strong class="hero-number" id="budget-remaining">٠٫٠٠٠ د.ك</strong>
+          <span class="muted" id="budget-caption">بعد حجز التزاماتك واحتياطي الأمان</span>
+        </div>
+        <div class="hero-coin" aria-hidden="true">ف</div>
+      </div>
+
+      <div class="nudges" id="nudges" hidden></div>
+      <section class="bank-card" id="bank-card">
+        <div class="section-heading"><div><span class="eyebrow">إشعارات بوبيان</span><h2>سجّل مصروفك من البنك</h2></div><span class="pill" id="bank-card-pending" hidden>٠</span></div>
+        <p class="bank-card-copy" id="bank-card-copy">الآيفون يجمع إشعارات بوبيان في ملف، وأنت تضغط «جلب الإشعارات» وتختاره. <span class="pill">مؤكد لإشعار البطاقة وخصم الحساب</span></p>
+        <div class="bank-card-actions">
+          <label class="primary file-button">جلب الإشعارات<input type="file" id="bank-file" accept=".txt,text/plain" hidden></label>
+          <button type="button" class="secondary" data-action="paste-bank">لصق رسالة</button>
+          <button type="button" class="secondary" data-action="new-transaction">＋ يدوي</button>
+        </div>
+        <button type="button" class="primary bank-card-review" id="bank-card-review" data-action="review-pending" hidden>راجع العمليات الجديدة</button>
+        <button type="button" class="link-button" data-action="bank-automation-guide">طريقة الربط مع الآيفون (مرة وحدة)</button>
+      </section>
+      <section class="daily-budget-card" id="daily-budget-card">
+        <div class="daily-budget-head">
+          <div><span class="eyebrow">محسوب من بياناتك الفعلية</span><h2>ميزانيتك الآمنة اليوم</h2></div>
+          <span class="status-badge" id="daily-status">بانتظار الميزانية</span>
+        </div>
+        <div class="daily-budget-values">
+          <div><span>المتاح اليوم</span><strong id="daily-limit">٠٫٠٠٠ د.ك</strong></div>
+          <div><span>المتبقي اليوم</span><strong id="daily-remaining">٠٫٠٠٠ د.ك</strong></div>
+          <div><span>أيام للراتب</span><strong id="days-remaining">٠</strong></div>
+        </div>
+        <div class="progress large"><span id="daily-progress"></span></div>
+        <p id="daily-guidance">حدد ميزانية الشهر عشان أحسب لك الحد اليومي تلقائيًا.</p>
+      </section>
+
+      <section class="panel" id="financial-alerts-panel" hidden>
+        <div class="section-heading"><div><span class="eyebrow">بدون تكرار مزعج</span><h2>تنبيهات مالية</h2></div><span class="pill" id="financial-alert-count">٠</span></div>
+        <div class="alert-list" id="financial-alert-list"></div>
+      </section>
+
+      <section class="coach-card" id="coach-card">
+        <span class="coach-icon">✦</span>
+        <div><strong>ملاحظة فلس</strong><p id="coach-message">أضف أول عملية عشان أبدأ أحلل صرفك.</p></div>
+      </section>
+
+      <details class="organized-section"><summary><span><strong>تفاصيل الشهر</strong><small>الرصيد · الديون · الميزانية · توقع نهاية الشهر</small></span><span class="disclosure-arrow" aria-hidden="true">⌄</span></summary><div class="organized-content">
+      <div class="safe-breakdown" aria-label="تفاصيل المبلغ الآمن">
+        <div><span>رصيدك الحالي</span><strong id="safe-cash">٠٫٠٠٠ د.ك</strong></div>
+        <div><span>أقساط قبل المعاش</span><strong id="safe-installments">٠٫٠٠٠ د.ك</strong></div>
+        <div><span>التزامات قادمة</span><strong id="safe-commitments">٠٫٠٠٠ د.ك</strong></div>
+        <div><span>دفعات البطاقات</span><strong id="safe-cards">٠٫٠٠٠ د.ك</strong></div>
+        <div><span>احتياطي الأمان</span><strong id="safe-buffer">٠٫٠٠٠ د.ك</strong></div>
+      </div>
+
+      <div class="metric-grid">
+        <article class="metric"><span>مصروف اليوم</span><strong id="today-spend">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>مصروف الشهر</span><strong id="month-spend">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>إجمالي الديون</span><strong id="total-debt">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>صافي الثروة</span><strong id="net-worth">٠٫٠٠٠ د.ك</strong></article>
+      </div>
+
+      <section class="panel cashflow-panel">
+        <div class="section-heading"><div><span class="eyebrow">من الدخل إلى المتاح</span><h2>مسار فلوسك هذا الشهر</h2></div><span class="pill">فعلي</span></div>
+        <div class="cashflow-steps" id="cashflow-steps">
+          <div><span>الدخل</span><strong id="flow-income">٠٫٠٠٠ د.ك</strong></div>
+          <i>←</i><div><span>الأقساط</span><strong id="flow-debts">٠٫٠٠٠ د.ك</strong></div>
+          <i>←</i><div><span>الالتزامات</span><strong id="flow-commitments">٠٫٠٠٠ د.ك</strong></div>
+          <i>←</i><div><span>المصروف</span><strong id="flow-expenses">٠٫٠٠٠ د.ك</strong></div>
+          <i>←</i><div class="available"><span>المتاح</span><strong id="flow-available">٠٫٠٠٠ د.ك</strong></div>
+        </div>
+      </section>
+
+      <section class="panel forecast-card" id="forecast-card">
+        <div class="section-heading"><div><span class="eyebrow">تقديري</span><h2>توقع نهاية الشهر</h2></div><span class="status-badge neutral" id="forecast-status">قيد التعلّم</span></div>
+        <strong class="forecast-number" id="forecast-balance">—</strong>
+        <p id="forecast-message">نحتاج مصروفات معتمدة كافية قبل بناء توقع موثوق.</p>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading"><div><span class="eyebrow">ميزانية الشهر</span><h2>وين وصلت؟</h2></div><span id="budget-percent" class="pill">٠٪</span></div>
+        <div class="progress large"><span id="budget-progress"></span></div>
+        <div class="split-label"><span id="budget-spent-label">صرفت ٠٫٠٠٠ د.ك</span><span id="budget-limit-label">من ٠٫٠٠٠ د.ك</span></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading"><div><span class="eyebrow">تحليل تلقائي</span><h2>أكثر فئات صرفك</h2></div></div>
+        <div id="category-chart" class="category-chart"></div>
+      </section>
+
+      </div></details>
+    </section>
+
+    <section class="view" id="transactions-view" data-view="transactions">
+      <div class="page-title"><div><span class="eyebrow">حركة فلوسك</span><h1>العمليات</h1></div><button class="primary" data-action="new-transaction">＋ إضافة</button></div>
+      <button class="secondary statement-import-button" type="button" data-action="import-statement">تحميل/استيراد كشف حساب 12 شهر</button>
+      <section class="pending-inbox" id="pending-inbox" hidden>
+        <div class="section-heading"><div><span class="eyebrow">وصلت من البنك</span><h2>تحتاج مراجعتك</h2></div><span class="pill" id="pending-count">٠</span></div>
+        <div class="pending-inbox-list" id="pending-inbox-list"></div>
+      </section>
+      <div class="toolbar-card">
+        <label class="search"><span>⌕</span><input id="transaction-search" type="search" placeholder="ابحث عن تاجر أو تصنيف"></label>
+        <select id="transaction-kind-filter" aria-label="تصفية نوع العملية"><option value="all">الكل</option><option value="expense">مصروف</option><option value="income">دخل</option><option value="pending">تحتاج مراجعة</option></select>
+      </div>
+      <div id="pending-notice" class="notice warning" hidden></div>
+      <div id="transaction-list" class="stack-list"></div>
+      <div id="transaction-empty" class="empty-state" hidden><span>⌁</span><h2>ما عندك عمليات</h2><p>أضفها يدوياً أو اجلب رسائل البنك.</p><button class="primary" data-action="import-bank">لصق رسالة</button></div>
+    </section>
+
+    <section class="view" id="commitments-view" data-view="commitments">
+      <div class="page-title"><div><span class="eyebrow">ثوابتك الشهرية</span><h1>التزاماتي الشهرية</h1></div><button class="primary" data-action="new-commitment">＋ التزام</button></div>
+      <div class="metric-grid commitment-metrics">
+        <article class="metric featured"><span>المتوسط الشهري</span><strong id="commitments-monthly-total">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>المدفوع هذا الشهر</span><strong id="commitments-paid-total">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>المتبقي هذا الشهر</span><strong id="commitments-remaining-total">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>بعد الأقساط والالتزامات</span><strong id="income-after-fixed">٠٫٠٠٠ د.ك</strong></article>
+      </div>
+      <section class="panel upcoming-strip"><span class="eyebrow">أقرب التزام قادم</span><strong id="next-commitment-name">لا يوجد</strong><p id="next-commitment-detail">أضف التزاماتك عشان نرتبها لك.</p></section>
+      <div class="toolbar-card commitment-toolbar">
+        <label class="search"><span>⌕</span><input id="commitment-search" type="search" placeholder="ابحث في الالتزامات"></label>
+        <select id="commitment-category-filter" aria-label="فلترة حسب التصنيف"><option value="all">كل التصنيفات</option></select>
+        <select id="commitment-status-filter" aria-label="فلترة حسب الحالة"><option value="all">كل الحالات</option><option value="active">نشط</option><option value="paid">مدفوع هذا الشهر</option><option value="paused">متوقف مؤقتاً</option></select>
+      </div>
+      <div id="commitment-list" class="card-list"></div>
+      <div id="commitment-empty" class="empty-state" hidden><span>◷</span><h2>ما أضفت التزامات بعد</h2><p>أضف الإيجار والفواتير والاشتراكات، وفلس يحجزها قبل حساب المتاح للصرف.</p><button class="primary" data-action="new-commitment">إضافة أول التزام</button></div>
+      <p class="legal-note">الالتزام السنوي يُحسب كمتوسط شهري للتحليل، بينما يُحجز كامل المبلغ فقط عند اقتراب استحقاقه.</p>
+    </section>
+
+    <section class="view" id="loans-view" data-view="loans">
+      <div class="page-title"><div><span class="eyebrow">خطة السداد</span><h1>القروض والأقساط</h1></div><div class="row wrap"><button class="secondary" data-action="scan-loans">رفع صور</button><button class="primary" data-action="new-loan">＋ قرض</button></div></div>
+      <div class="metric-grid debt-metrics">
+        <article class="metric featured"><span>إجمالي الديون المتبقية</span><strong id="loans-total">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>الأقساط الشهرية</span><strong id="installments-total">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>القروض النشطة</span><strong id="active-loans-count">٠</strong></article>
+        <article class="metric"><span>أقرب قسط</span><strong id="next-installment">—</strong></article>
+        <article class="metric"><span>صفر ديون المتوقع</span><strong id="zero-debt-date">—</strong></article>
+        <article class="metric"><span>نسبة الأقساط للدخل</span><strong id="debt-income-ratio">—</strong><small id="dti-caption">أضف دخلك لحساب النسبة</small></article>
+      </div>
+      <section class="loan-analysis-status" id="loan-analysis-status" hidden aria-live="polite">
+        <span class="analysis-spinner" id="loan-analysis-spinner" aria-hidden="true"></span>
+        <div class="analysis-copy">
+          <strong id="loan-analysis-title">جاري تحليل الصور</strong>
+          <p id="ocr-progress-text">تقدر تكمل استخدام فلس، وبنفتح لك شاشة المراجعة أول ما نخلص.</p>
+          <div class="progress large"><span id="ocr-progress-bar"></span></div>
+        </div>
+        <b id="loan-analysis-percent">٠٪</b>
+        <button type="button" class="secondary small" id="loan-analysis-retry" data-action="scan-loans" hidden>حاول مرة ثانية</button>
+      </section>
+      <section class="panel">
+        <label class="field"><span>دفعة إضافية شهرية للمحاكاة</span><div class="money-field"><input id="global-extra" inputmode="decimal" value="0.000"><b>د.ك</b></div></label>
+        <p class="hint">يُطبق الرقم على كل قرض بشكل مستقل للمقارنة، وليس توزيعاً تلقائياً بين القروض.</p>
+      </section>
+      <div id="loan-list" class="card-list"></div>
+      <div id="loan-empty" class="empty-state" hidden><span>▤</span><h2>حمّل صور قروضك</h2><p>صوّر صفحة القروض والأقساط من تطبيق البنك، وفلس يقرأها ويجهزها للمراجعة.</p><div class="row wrap"><button class="primary" data-action="scan-loans">رفع الصور</button><button class="secondary" data-action="new-loan">إدخال يدوي</button></div></div>
+      <p class="legal-note">الحساب تقديري. رسوم البنك وشروط التسوية المبكرة غير مشمولة؛ عرض البنك هو المرجع.</p>
+    </section>
+
+    <section class="view" id="advisor-view" data-view="advisor">
+      <div class="page-title"><div><span class="eyebrow">خطة من بياناتك</span><h1>المستشار</h1></div><span class="pill">ديون · التزامات · استثمار</span></div>
+      <section class="advisor-hero">
+        <span class="eyebrow">هدفك المالي</span>
+        <h2 id="advisor-headline">رتّب التزاماتك، خفّض ديونك، ثم وسّع استثمارك</h2>
+        <p id="advisor-summary">أدخل دخلك ومصروفاتك والتزاماتك عشان أحسب لك توزيعاً شهرياً مبدئياً.</p>
+      </section>
+      <div class="metric-grid advisor-metrics">
+        <article class="metric"><span>الدخل الشهري</span><strong id="advisor-income">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>أقساط الديون</span><strong id="advisor-installments">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>الالتزامات الشهرية</span><strong id="advisor-commitments">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>إجمالي الدين المتبقي</span><strong id="advisor-total-debt">٠٫٠٠٠ د.ك</strong></article>
+      </div>
+      <section class="panel">
+        <div class="section-heading"><div><span class="eyebrow">توزيع الشهر</span><h2>من الراتب إلى أهدافك</h2></div><span class="pill" id="advisor-phase-pill">بانتظار البيانات</span></div>
+        <p class="hint" id="advisor-baseline-note"></p>
+        <div class="advisor-budget-list">
+          <div><span>الدخل</span><strong id="advisor-budget-income">٠٫٠٠٠ د.ك</strong></div>
+          <div><span>الأقساط الإلزامية</span><strong id="advisor-budget-installments">−٠٫٠٠٠ د.ك</strong></div>
+          <div><span>الالتزامات الشهرية</span><strong id="advisor-budget-commitments">−٠٫٠٠٠ د.ك</strong></div>
+          <div><span>المصروف المعيشي المتوقع</span><strong id="advisor-budget-living">−٠٫٠٠٠ د.ك</strong></div>
+          <div class="advisor-budget-total"><span id="advisor-surplus-label">المتبقي للأهداف</span><strong id="advisor-surplus">٠٫٠٠٠ د.ك</strong></div>
+        </div>
+        <div class="advisor-allocations">
+          <article><span>احتياطي الطوارئ</span><strong id="advisor-reserve-allocation">٠٫٠٠٠ د.ك</strong><small id="advisor-reserve-caption">هدف الاحتياطي: —</small></article>
+          <article><span>سداد إضافي للديون</span><strong id="advisor-debt-allocation">٠٫٠٠٠ د.ك</strong><small id="advisor-debt-caption">بعد الأقساط الإلزامية</small></article>
+          <article><span>استثمار شهري</span><strong id="advisor-investment-allocation">٠٫٠٠٠ د.ك</strong><small>مبلغ طويل الأجل، والعائد غير مضمون</small></article>
+        </div>
+      </section>
+      <section class="panel advisor-actions-panel">
+        <div class="section-heading"><div><span class="eyebrow">خطواتك التالية</span><h2>خطة الخروج من الدين وبناء الاستثمار</h2></div></div>
+        <ol id="advisor-actions" class="advisor-actions"></ol>
+        <p class="legal-note">هذه خطة توزيع مبدئية حسب البيانات المدخلة وليست توصية استثمارية مضمونة. افحص رسوم السداد المبكر، وسجّل معدلات الديون الفعلية قبل ترتيبها. لا تستثمر مبلغاً تحتاجه قريباً.</p>
+      </section>
+      <details class="organized-section" id="accountant-details"><summary><span><strong>المحاسب الآلي</strong><small>اسأل عن فلوسك وخطتك</small></span><span class="disclosure-arrow" aria-hidden="true">⌄</span></summary><div class="organized-content">
+      <section class="panel accountant-panel">
+        <div class="section-heading"><div><span class="eyebrow">حسابات من بياناتك</span><h2>المحاسب الآلي</h2></div><span class="pill">من بياناتك</span></div>
+        <p class="hint">الحسابات تتم بمعادلات ثابتة، وأي توقع يظهر لك بوضوح على أنه تقديري.</p>
+        <div class="question-chips" id="accountant-prompts">
+          <button type="button">كم أقدر أصرف اليوم؟</button>
+          <button type="button">شنو عليّ هذا الأسبوع؟</button>
+          <button type="button">متى أخلص ديوني؟</button>
+          <button type="button">وين أكثر شي قاعد أصرف؟</button>
+          <button type="button">حلل سلوك صرفي آخر 12 شهر</button>
+        </div>
+        <form class="accountant-form" id="accountant-form">
+          <input id="accountant-question" maxlength="180" placeholder="اسأل عن صرفك، ديونك أو التزاماتك…">
+          <button type="submit" class="primary">احسب</button>
+        </form>
+        <div class="accountant-answer" id="accountant-answer" hidden aria-live="polite"></div>
+      </section>
+
+      </div></details>
+      <button class="secondary advisor-link" type="button" data-target-view="commitments">إدارة الالتزامات وتسجيل المدفوعات</button>
+    </section>
+
+    <section class="view" id="investment-view" data-view="investment">
+      <div class="page-title"><div><span class="eyebrow">محفظتك وخطتك الطويلة</span><h1>الاستثمار والأسهم</h1></div><button class="primary" type="button" data-action="new-stock">＋ سهم كويتي</button></div>
+      <button class="secondary gold-link" type="button" data-target-view="gold">◈ محفظة الذهب</button>
+      <section class="panel stock-portfolio-panel">
+        <div class="section-heading"><div><span class="eyebrow">محفظة الأسهم الكويتية</span><h2>القيمة والربح أو الخسارة</h2></div><span class="pill" id="stock-holdings-count">لا توجد أسهم</span></div>
+        <div class="metric-grid stock-portfolio-summary">
+          <article class="metric featured"><span>إجمالي التكلفة</span><strong id="stock-total-cost">٠٫٠٠٠ د.ك</strong></article>
+          <article class="metric"><span>القيمة الحالية</span><strong id="stock-current-value">٠٫٠٠٠ د.ك</strong></article>
+          <article class="metric"><span>الربح / الخسارة</span><strong id="stock-total-profit">٠٫٠٠٠ د.ك</strong></article>
+          <article class="metric"><span>النسبة</span><strong id="stock-total-percent">٠٪</strong></article>
+        </div>
+        <div class="stock-source-note">
+          <span>مصدر السعر</span>
+          <p>حدّث السعر من شاشة بورصة الكويت الرسمية. بيانات الشاشة متأخرة ١٥ دقيقة، ويحفظ فلس وقت آخر تحديث تدخله.</p>
+          <a href="https://www.boursakuwait.com.kw/ar/securities/prices-and-screens/market-watch" target="_blank" rel="noopener">فتح شاشة السوق الرسمية ↗</a>
+        </div>
+        <div id="stock-list" class="card-list stock-list"></div>
+        <div id="stock-empty" class="empty-state"><span>↗</span><h2>أضف أول سهم</h2><p>اختر الشركة الكويتية من القائمة وسجّل بيانات الشراء وآخر سعر من البورصة.</p><button class="primary" type="button" data-action="new-stock">اختيار سهم كويتي</button></div>
+      </section>
+      <details class="organized-section" id="cooling-section">
+        <summary><span><strong>تبريد</strong><small>اختَر السهم واحسب شراءً إضافياً لتعديل تكلفته</small></span><span class="disclosure-arrow" aria-hidden="true">⌄</span></summary>
+        <div class="organized-content">
+          <form id="cooling-form" class="panel">
+            <label class="field"><span>اختيار السهم من محفظتي</span><select id="cooling-stock"></select></label>
+            <p class="hint" id="cooling-position"></p>
+            <div class="form-grid">
+              <label class="field"><span>سعر التكلفة الحالي مع الرسوم</span><div class="money-field"><input id="cooling-current-cost" readonly><b>فلس</b></div></label>
+              <label class="field"><span>سعر الشراء لتعديل التكلفة</span><div class="money-field"><input id="cooling-buy-price" inputmode="decimal" placeholder="مثال: 90"><b>فلس</b></div></label>
+              <label class="field"><span>متوسط التكلفة المطلوب</span><div class="money-field"><input id="cooling-target-price" inputmode="decimal"><b>فلس</b></div></label>
+              <label class="field"><span>رسوم الشراء الإضافي</span><div class="money-field"><input id="cooling-fees" inputmode="decimal" value="0.000"><b>د.ك</b></div></label>
+            </div>
+            <p class="hint">المتوسط المطلوب يبدأ بآخر سعر مسجل للسهم، وتقدر تغيره. للوصول له من تكلفة أعلى، لازم سعر الشراء يكون أقل منه.</p>
+            <div class="stock-entry-preview" id="cooling-results" aria-live="polite" hidden>
+              <div><span>الكمية المطلوبة للشراء</span><strong id="cooling-quantity">—</strong></div>
+              <div><span>المبلغ المطلوب شامل الرسوم</span><strong id="cooling-amount">—</strong></div>
+              <div><span>التكلفة بعد التبريد</span><strong id="cooling-new-cost">—</strong></div>
+            </div>
+            <p class="hint" id="cooling-message" role="status"></p>
+          </form>
+        </div>
+      </details>
+      <details class="organized-section"><summary><span><strong>محاكاة الاستثمار التراكمي</strong><small>جرّب المبلغ والمدة والعائد الافتراضي</small></span><span class="disclosure-arrow" aria-hidden="true">⌄</span></summary><div class="organized-content">
+      <div class="section-heading investment-simulator-heading"><div><span class="eyebrow">سيناريو حسابي</span><h2>محاكاة الاستثمار التراكمي</h2></div></div>
+      <form class="panel form-grid" id="investment-form">
+        <label class="field"><span>المبلغ الأولي</span><div class="money-field"><input id="investment-initial" inputmode="decimal" value="0.000"><b>د.ك</b></div></label>
+        <label class="field"><span>الإضافة الشهرية</span><div class="money-field"><input id="investment-monthly" inputmode="decimal" value="100.000"><b>د.ك</b></div></label>
+        <label class="field"><span>العائد السنوي الافتراضي</span><div class="money-field"><input id="investment-rate" inputmode="decimal" type="number" min="-50" max="50" step="0.5" value="7"><b>٪</b></div></label>
+        <label class="field"><span>المدة</span><div class="money-field"><input id="investment-years" inputmode="numeric" type="number" min="1" max="60" value="10"><b>سنة</b></div></label>
+      </form>
+      <div class="metric-grid">
+        <article class="metric featured"><span>القيمة المتوقعة</span><strong id="investment-value">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>مساهماتك</span><strong id="investment-contributions">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>النمو/الخسارة</span><strong id="investment-growth">٠٫٠٠٠ د.ك</strong></article>
+        <article class="metric"><span>المدة</span><strong id="investment-duration">١٠ سنوات</strong></article>
+      </div>
+      <section class="panel chart-panel"><h2>تطور السيناريو</h2><div id="investment-chart" class="line-chart" role="img" aria-label="رسم نمو الاستثمار"></div></section>
+      <section class="panel"><h2>قارن العوائد</h2><div id="scenario-list" class="scenario-list"></div></section>
+      <p class="legal-note">هذه توقعات حسابية بعائد ثابت وليست عائداً مضموناً أو توصية استثمارية. لا تشمل الرسوم أو التضخم أو الزكاة.</p>
+      </div></details>
+    </section>
+
+    <section class="view" id="gold-view" data-view="gold">
+      <div class="page-title"><div><span class="eyebrow">الاستثمار</span><h1>محفظة الذهب</h1></div><button class="secondary small" type="button" data-target-view="investment">الأسهم</button></div>
+      <div id="gold-root"></div>
+    </section>
+
+    <section class="view" id="checkup-view" data-view="checkup">
+      <div class="page-title"><div><span class="eyebrow">مراجعة مستشار مالي</span><h1>الفحص المالي</h1></div><span class="pill">تقييم · زكاة · تكلفة القرض</span></div>
+      <div id="checkup-root"></div>
+    </section>
+
+    <section class="view" id="spending-view" data-view="spending">
+      <div class="page-title"><div><span class="eyebrow">تحكم بالصرف</span><h1>المصروف والميزانية</h1></div></div>
+      <div id="spending-root"></div>
+      <details class="organized-section"><summary><span><strong>تحليل المصروفات</strong><small>كشف 12 شهر وأنماط صرفك</small></span><span class="disclosure-arrow" aria-hidden="true">⌄</span></summary><div class="organized-content">
+      <section class="panel behavior-panel" id="behavior-panel">
+        <div class="section-heading"><div><span class="eyebrow">قراءة من معاملاتك الفعلية</span><h2>سلوك صرفك · آخر 12 شهر</h2></div><button type="button" class="secondary small" data-action="import-statement">＋ كشف حساب</button></div>
+        <p class="hint">نحلل المصروفات المعتمدة ونوضح الأنماط بالأرقام؛ ما نخمن صفات شخصية من مشترياتك.</p>
+        <div id="behavior-empty" class="behavior-empty"><strong>ما عندنا كشف 12 شهر للحين</strong><span>نزّل كشف معاملاتك من بوبيان بصيغة PDF أو CSV أو OFX، وبعدها اختره هنا. الملف يُقرأ على جهازك.</span><button type="button" class="primary" data-action="import-statement">اختيار كشف حساب</button></div>
+        <div id="behavior-content" hidden>
+          <div class="metric-grid behavior-metrics">
+            <article class="metric featured"><span>إجمالي المصروفات المحللة</span><strong id="behavior-total">٠٫٠٠٠ د.ك</strong></article>
+            <article class="metric"><span>متوسط الشهر المسجل</span><strong id="behavior-average">٠٫٠٠٠ د.ك</strong></article>
+            <article class="metric"><span>عدد العمليات</span><strong id="behavior-count">٠</strong></article>
+            <article class="metric"><span>أكثر فئة صرفًا</span><strong id="behavior-top-category">—</strong></article>
+          </div>
+          <div id="behavior-month-chart" class="behavior-month-chart" aria-label="المصروفات حسب الشهر"></div>
+          <ul id="behavior-insights" class="behavior-insights"></ul>
+          <section class="behavior-subsection" id="behavior-repeat-section" hidden>
+            <h3>جهات صرف متكررة محتملة</h3>
+            <div id="behavior-repeat-list" class="behavior-repeat-list"></div>
+            <p class="hint">التكرار قد يكون مشتريات متكررة؛ ما نعتبره اشتراكاً أو التزاماً إلا بعد مراجعتك.</p>
+          </section>
+          <section class="behavior-subsection" id="behavior-category-change-section" hidden>
+            <h3>فئات زاد صرفها مؤخراً</h3>
+            <div id="behavior-category-change-list" class="behavior-repeat-list"></div>
+            <p class="hint">مقارنة متوسط آخر 3 أشهر بالثلاثة السابقة؛ الأشهر بدون حركة تُحسب بصفر.</p>
+          </section>
+          <p class="hint" id="behavior-coverage"></p>
+        </div>
+      </section>
+
+      </div></details>
+    </section>
+
+    <section class="view" id="goals-view" data-view="goals">
+      <div class="page-title"><div><span class="eyebrow">خططك القادمة</span><h1>الأهداف</h1></div><button class="primary" data-action="new-goal">＋ هدف</button></div>
+      <div id="salary-plan-root"></div>
+      <div id="goal-list" class="card-list"></div>
+      <div id="goal-empty" class="empty-state" hidden><span>◎</span><h2>شنو هدفك؟</h2><p>صندوق طوارئ، سداد دين، سيارة، أو استثمار.</p><button class="primary" data-action="new-goal">إضافة هدف</button></div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="التنقل الرئيسي">
+    <button class="active" data-target="dashboard"><span>◉</span>الرئيسية</button>
+    <button data-target="transactions"><span>▤</span>العمليات</button>
+    <button data-target="commitments"><span>◷</span>الالتزامات</button>
+    <button data-target="loans"><span>▦</span>القروض</button>
+    <button type="button" id="more-nav-button" data-action="open-more" aria-haspopup="dialog" aria-controls="more-dialog"><span>⋯</span>المزيد</button>
+  </nav>
+
+  <dialog id="more-dialog" class="more-dialog">
+    <div class="dialog-heading"><h2>المزيد</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+    <div class="more-menu">
+      <button type="button" data-action="open-onboarding"><span>✦</span><strong>رتّب لي كل شي</strong><small>سؤالان وأضبط لك الخطة</small></button>
+      <button type="button" data-target="advisor"><span>✦</span><strong>المستشار</strong><small>خطة الراتب واسأل المحاسب</small></button>
+      <button type="button" data-target="investment"><span>↗</span><strong>الاستثمار</strong><small>محفظة الأسهم</small></button>
+      <button type="button" data-target="gold"><span>◈</span><strong>محفظة الذهب</strong><small>مشترياتك وسعر اليوم ومتى تشتري</small></button>
+      <button type="button" data-target="spending"><span>◔</span><strong>المصروف والميزانية</strong><small>الفعلي مقابل الميزانية</small></button>
+      <button type="button" data-target="checkup"><span>✚</span><strong>الفحص المالي</strong><small>تقييم وزكاة وتكلفة القرض</small></button>
+      <button type="button" data-target="goals"><span>◎</span><strong>الأهداف</strong><small>تابع ادخارك وتقدمك</small></button>
+    </div>
+    <h3>أدوات البنك</h3>
+    <div class="more-tools">
+      <button type="button" class="secondary" data-action="import-statement">تحميل كشف حساب 12 شهر</button>
+      <button type="button" class="secondary" data-action="import-bank">لصق رسالة بنك</button>
+      <button type="button" class="secondary" data-action="bank-automation-guide">ربط إشعارات بوبيان</button>
+    </div>
+  </dialog>
+
+  <dialog id="portfolio-import-dialog">
+    <div class="dialog-heading"><h2>إضافة الأسهم من الصورة</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+    <div id="portfolio-import-list" class="card-list"></div>
+    <p class="hint">الأسعار من الصورة وليست أسعاراً مباشرة. متوسط التكلفة الظاهر مقرب؛ لذلك قد تختلف الخسارة المحسوبة قليلاً عن منصة التداول. ما نضيف رسوماً فوق المتوسط.</p>
+    <p id="portfolio-import-status" role="status"></p>
+    <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="button" class="primary" id="portfolio-import-save">إضافة إلى محفظتي</button></div>
+  </dialog>
+
+  <dialog id="transaction-dialog">
+    <form id="transaction-form">
+      <div class="dialog-heading"><h2 id="transaction-dialog-title">عملية جديدة</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <input type="hidden" id="transaction-id">
+      <label class="field"><span>النوع</span><select id="transaction-kind"><option value="expense">مصروف</option><option value="income">دخل</option></select></label>
+      <label class="field"><span>المبلغ</span><div class="money-field"><input id="transaction-amount" required inputmode="decimal" placeholder="0.000"><b>د.ك</b></div></label>
+      <label class="field"><span>التاجر أو مصدر الدخل</span><input id="transaction-merchant" required maxlength="80" placeholder="مثال: الجمعية"></label>
+      <label class="field"><span>التصنيف</span><select id="transaction-category"></select></label>
+      <label class="field"><span>التاريخ</span><input id="transaction-date" type="date" required></label>
+      <label class="checkbox"><input id="transaction-reviewed" type="checkbox" checked><span>راجعت العملية وأعتمدها في الحسابات</span></label>
+      <p class="form-error" id="transaction-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">حفظ</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="bank-dialog">
+    <form id="bank-form">
+      <div class="dialog-heading"><h2>لصق تنبيه البنك</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="notice">الصق إشعاراً واحداً أو عدة إشعارات (افصل بينها بسطر فاضي). يفهم فلس الشراء والسحب والتحويل والراتب والاسترداد، ويتجاهل رمز التحقق والعمليات المرفوضة، وتراجع كل شيء قبل الاعتماد.</div>
+      <button type="button" class="secondary" id="bank-paste-clipboard">لصق من الحافظة</button>
+      <label class="field"><span>نص الرسالة</span><textarea id="bank-text" rows="6" placeholder="Purchase of KWD 12.450 at TALABAT"></textarea></label>
+      <div class="bank-preview" id="bank-preview" aria-live="polite"></div>
+      <p class="form-error" id="bank-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">إضافة للمراجعة</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="statement-import-dialog" class="wide-dialog">
+    <form id="statement-import-form">
+      <div class="dialog-heading"><div><h2>استيراد كشف حساب 12 شهر</h2><span class="eyebrow">بوبيان · مراجعة قبل الإضافة</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="notice privacy-notice">نزّل كشف المعاملات من بوبيان، ثم اختر الملف هنا. «فلس» ما يطلب بيانات دخول البنك، ويقرأ الملف محليًا على جهازك. لتحليل مشتريات الفيزا بالتفصيل ارفع كشف البطاقة أيضًا؛ تسديد البطاقة من الحساب يُستبعد حتى ما ينحسب الشراء مرتين.</div>
+      <label class="field"><span>ملف كشف الحساب</span><input id="statement-file" type="file" accept=".pdf,application/pdf,.csv,.tsv,.ofx,.qfx,.txt,text/csv,text/tab-separated-values,application/x-ofx,application/vnd.intu.qfx"></label>
+      <p class="hint">الصيغ المدعومة PDF وCSV وTSV وOFX/QFX. دعم PDF حالياً لكشف بوبيان النصي بالعربي؛ الصور الممسوحة والملفات المحمية غير مدعومة. نضيف المصروفات فقط؛ الإيداعات والتحويلات بين الحسابات تستبعد من تحليل الصرف.</p>
+      <p class="hint" id="statement-import-progress" role="status" aria-live="polite" hidden></p>
+      <p class="form-error" id="statement-import-error" role="alert"></p>
+      <section id="statement-import-preview" class="statement-import-preview" hidden>
+        <div class="section-heading"><div><span class="eyebrow">معاينة قبل الحفظ</span><h3 id="statement-preview-period">—</h3></div><span class="pill" id="statement-preview-count">٠ عملية</span></div>
+        <div class="statement-preview-totals">
+          <div><span>مصروفات جديدة</span><strong id="statement-preview-total">٠٫٠٠٠ د.ك</strong></div>
+          <div><span>مكررة تم تجاهلها</span><strong id="statement-preview-duplicates">٠</strong></div>
+          <div><span>إيداعات/تحويلات مستبعدة</span><strong id="statement-preview-excluded">٠</strong></div>
+          <div><span>خارج الفترة/غير مقروءة</span><strong id="statement-preview-skipped">٠</strong></div>
+        </div>
+        <div id="statement-preview-list" class="statement-preview-list"></div>
+        <p class="hint">التصنيف الآلي اقتراح أولي؛ تقدر تعدل تصنيف أي عملية بعد الاستيراد من صفحة العمليات.</p>
+      </section>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary" id="statement-import-confirm" disabled>اعتماد المصروفات وتحليلها</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="commitment-dialog" class="wide-dialog">
+    <form id="commitment-form">
+      <div class="dialog-heading"><h2 id="commitment-dialog-title">التزام جديد</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <input type="hidden" id="commitment-id">
+      <div class="form-grid">
+        <label class="field"><span>اسم الالتزام</span><input id="commitment-name" required maxlength="80" placeholder="مثال: إيجار البيت"></label>
+        <label class="field"><span>التصنيف</span><select id="commitment-category"></select></label>
+        <label class="field custom-category-field" id="custom-category-field" hidden><span>اسم التصنيف المخصص</span><input id="commitment-custom-category" maxlength="60" placeholder="اكتب التصنيف"></label>
+        <label class="field"><span>المبلغ</span><div class="money-field"><input id="commitment-amount" required inputmode="decimal" placeholder="0.000"><b>د.ك</b></div></label>
+        <label class="field"><span>تاريخ أول/قادم استحقاق</span><input id="commitment-due-date" type="date" required></label>
+        <label class="field"><span>التكرار</span><select id="commitment-recurrence"><option value="monthly">شهري</option><option value="quarterly">كل 3 أشهر</option><option value="semiannual">كل 6 أشهر</option><option value="annual">سنوي</option><option value="once">مرة واحدة</option></select></label>
+        <label class="field"><span>طريقة الدفع</span><select id="commitment-payment-method"><option value="bank">حساب بنكي</option><option value="credit_card">بطاقة ائتمان</option><option value="cash">نقدي</option><option value="other">أخرى</option></select></label>
+        <label class="field"><span>الحالة</span><select id="commitment-status"><option value="active">نشط</option><option value="paused">متوقف مؤقتاً</option></select></label>
+      </div>
+      <label class="field"><span>ملاحظات اختيارية</span><textarea id="commitment-notes" rows="3" maxlength="500" placeholder="أي تفاصيل تساعدك لاحقاً"></textarea></label>
+      <p class="form-error" id="commitment-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">حفظ الالتزام</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="loan-dialog" class="wide-dialog">
+    <form id="loan-form">
+      <div class="dialog-heading"><h2 id="loan-dialog-title">قرض جديد</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <input type="hidden" id="loan-id">
+      <div class="form-grid">
+        <label class="field"><span>اسم القرض أو القسط</span><input id="loan-name" required maxlength="60" placeholder="مثال: التمويل الشخصي"></label>
+        <label class="field"><span>البنك / الجهة</span><input id="loan-lender" maxlength="60" placeholder="مثال: بنك بوبيان"></label>
+        <label class="field"><span>نوع القرض</span><select id="loan-type"></select></label>
+        <label class="field"><span>الحالة</span><select id="loan-status"><option value="active">نشط</option><option value="completed">مكتمل</option><option value="overdue">متأخر</option><option value="stopped">متوقف</option></select></label>
+        <label class="field"><span>المبلغ الأصلي</span><div class="money-field"><input id="loan-original" required inputmode="decimal"><b>د.ك</b></div></label>
+        <label class="field"><span>الرصيد المتبقي</span><div class="money-field"><input id="loan-balance" required inputmode="decimal"><b>د.ك</b></div></label>
+        <label class="field"><span>القسط الشهري</span><div class="money-field"><input id="loan-installment" required inputmode="decimal"><b>د.ك</b></div></label>
+        <label class="field"><span>إجمالي المدفوع</span><div class="money-field"><input id="loan-paid" inputmode="decimal" value="0.000"><b>د.ك</b></div></label>
+        <label class="field"><span>يوم الخصم الشهري</span><input id="loan-day" type="number" min="1" max="31" value="1"></label>
+        <label class="field"><span>الأقساط المتبقية</span><input id="loan-remaining-installments" type="number" min="0" max="1200" placeholder="يُحسب تلقائياً إذا تركته فارغاً"></label>
+        <label class="field"><span>تاريخ البداية</span><input id="loan-start-date" type="date"></label>
+        <label class="field"><span>تاريخ النهاية</span><input id="loan-end-date" type="date"></label>
+        <label class="field"><span>معدل سنوي متناقص</span><div class="money-field"><input id="loan-rate" type="number" min="0" max="100" step="0.25" value="0"><b>٪</b></div></label>
+      </div>
+      <p class="hint">للقرض بدون فائدة أو المرابحة الثابتة: أدخل كامل الرصيد المستحق واستخدم ٠٪.</p>
+      <p class="form-error" id="loan-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">حفظ</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="extra-payment-dialog" class="wide-dialog">
+    <form id="extra-payment-form">
+      <div class="dialog-heading"><div><h2>دفعة إضافية</h2><span class="eyebrow" id="extra-payment-loan-name"></span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <input type="hidden" id="extra-payment-loan-id">
+      <label class="field"><span>مبلغ الدفعة الإضافية</span><div class="money-field"><input id="extra-payment-amount" required inputmode="decimal" placeholder="500.000"><b>د.ك</b></div></label>
+      <div class="simulation-card" id="extra-payment-simulation"><p>أدخل المبلغ لعرض المحاكاة قبل الحفظ.</p></div>
+      <p class="hint" id="extra-payment-disclaimer">لا نحسب توفير فوائد إلا إذا كان معدل الفائدة وطريقة الاحتساب متوفرين.</p>
+      <p class="form-error" id="extra-payment-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary" id="save-extra-payment" disabled>تأكيد الدفعة</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="loan-scan-dialog" class="wide-dialog">
+    <form id="loan-scan-form">
+      <div class="dialog-heading"><div><h2>استيراد القروض من صور</h2><span class="eyebrow">اختر الصور واترك الباقي على فلس</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="notice privacy-notice">🔒 الصور تُقرأ داخل متصفحك ولا تُحفظ في فلس. يحتاج التحليل اتصالاً بالإنترنت.</div>
+      <label class="upload-zone" id="loan-upload-zone">
+        <span class="upload-icon">▣</span>
+        <strong>اختر سكرين شوت القروض والأقساط</strong>
+        <small>PNG أو JPG — حتى ٦ صور</small>
+        <input type="file" id="loan-screenshots" accept="image/png,image/jpeg,image/webp" multiple hidden>
+      </label>
+      <p class="hint centered">بعد اختيار الصور تتسكر هذه النافذة، والتحليل يكمل بالخلفية.</p>
+      <div class="dialog-actions single"><button type="button" class="secondary close-dialog">إلغاء</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="loan-review-dialog" class="wide-dialog">
+    <form id="loan-review-form">
+      <div class="dialog-heading"><div><h2>راجع القروض والأقساط</h2><span class="eyebrow">عدّل أي رقم قبل الحفظ</span></div><button type="button" class="close-dialog discard-loan-scan" aria-label="إغلاق">×</button></div>
+      <div class="notice">تأكد من الرصيد المتبقي والقسط الشهري. اضغط على الصورة لمقارنتها بالبيانات المقروءة.</div>
+      <div id="loan-image-previews" class="image-preview-grid" aria-label="معاينة الصور المختارة"></div>
+      <div id="loan-scan-results" class="scan-results"></div>
+      <button type="button" class="secondary" id="add-missing-scanned-loan">＋ إضافة قرض مفقود</button>
+      <p class="form-error" id="loan-scan-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog discard-loan-scan">إلغاء</button><button type="submit" class="primary" id="save-scanned-loans" disabled>تأكيد وحفظ</button></div>
+    </form>
+  </dialog>
+
+  <div id="image-lightbox" class="image-lightbox" hidden role="dialog" aria-modal="true" aria-label="معاينة صورة القرض">
+    <button type="button" id="close-image-lightbox" aria-label="إغلاق الصورة">×</button>
+    <img id="lightbox-image" alt="صورة القرض بالحجم الكامل">
+  </div>
+
+  <dialog id="goal-dialog">
+    <form id="goal-form">
+      <div class="dialog-heading"><h2 id="goal-dialog-title">هدف جديد</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <input type="hidden" id="goal-id">
+      <label class="field"><span>اسم الهدف</span><input id="goal-name" required maxlength="60" placeholder="مثال: صندوق الطوارئ"></label>
+      <label class="field"><span>المبلغ المطلوب</span><div class="money-field"><input id="goal-target" required inputmode="decimal"><b>د.ك</b></div></label>
+      <label class="field"><span>المدخر حالياً</span><div class="money-field"><input id="goal-saved" required inputmode="decimal" value="0.000"><b>د.ك</b></div></label>
+      <label class="field"><span>الإضافة الشهرية</span><div class="money-field"><input id="goal-monthly" required inputmode="decimal" value="0.000"><b>د.ك</b></div></label>
+      <p class="form-error" id="goal-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">حفظ</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="stock-dialog" class="wide-dialog">
+    <form id="stock-form">
+      <div class="dialog-heading"><div><h2 id="stock-dialog-title">إضافة سهم كويتي</h2><span class="eyebrow">اختيار من الشركات المدرجة في بورصة الكويت</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <input type="hidden" id="stock-id">
+      <label class="field"><span>ابحث داخل قائمة الأسهم</span><input id="stock-search" type="search" autocomplete="off" placeholder="مثال: بيتك، KFH، أو 108"></label>
+      <label class="field"><span>السهم الكويتي</span><select id="stock-security" required></select><small id="stock-list-date" class="field-help"></small></label>
+      <div class="form-grid">
+        <label class="field"><span>عدد الأسهم</span><input id="stock-quantity" required inputmode="numeric" type="number" min="1" max="100000000" step="1" placeholder="1000"></label>
+        <label class="field"><span>سعر الشراء للسهم</span><div class="money-field"><input id="stock-purchase-price" required inputmode="decimal" placeholder="800"><b>فلس</b></div></label>
+        <label class="field"><span>العمولات والرسوم المتوقعة للشراء والبيع</span><div class="money-field"><input id="stock-fees" required inputmode="decimal" value="0.000"><b>د.ك</b></div></label>
+        <label class="field"><span>السعر الحالي من بورصة الكويت</span><div class="money-field"><input id="stock-current-price" required inputmode="decimal" placeholder="750"><b>فلس</b></div></label>
+      </div>
+      <div class="stock-entry-preview" aria-live="polite">
+        <div><span>إجمالي التكلفة</span><strong id="stock-preview-cost">—</strong></div>
+        <div><span>سعر التعادل للخروج بلا خسارة</span><strong id="stock-preview-break-even">—</strong></div>
+        <div><span>الربح / الخسارة</span><strong id="stock-preview-profit">—</strong></div>
+      </div>
+      <div class="stock-source-note compact">
+        <p>السعر لا يتحدث تلقائياً. افتح الشاشة الرسمية وانقل آخر سعر ظاهر؛ بياناتها متأخرة ١٥ دقيقة.</p>
+        <a href="https://www.boursakuwait.com.kw/ar/securities/prices-and-screens/market-watch" target="_blank" rel="noopener">فتح بورصة الكويت ↗</a>
+      </div>
+      <p class="form-error" id="stock-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">حفظ السهم</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="average-down-dialog" class="wide-dialog">
+    <form id="average-down-form">
+      <div class="dialog-heading"><div><h2>حاسبة تعديل متوسط التكلفة</h2><span class="eyebrow" id="average-stock-name"></span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <input type="hidden" id="average-stock-id">
+      <p class="hint" id="average-current-summary"></p>
+      <div class="form-grid">
+        <label class="field"><span>سعر الشراء لتعديل التكلفة</span><div class="money-field"><input id="average-buy-price" inputmode="decimal"><b>فلس</b></div></label>
+        <label class="field"><span>متوسط التكلفة المطلوب</span><div class="money-field"><input id="average-target-price" inputmode="decimal"><b>فلس</b></div></label>
+        <label class="field"><span>الرسوم الإضافية المتوقعة</span><div class="money-field"><input id="average-extra-fees" inputmode="decimal" value="0.000"><b>د.ك</b></div></label>
+      </div>
+      <p class="hint">للوصول إلى متوسط أقل من تكلفتك الحالية، يجب أن يكون سعر الشراء الإضافي أقل من المتوسط المطلوب. الشراء بنفس سعر السوق يقرّب المتوسط منه ولا يجعله مساوياً له تماماً.</p>
+      <div class="stock-entry-preview" id="average-results" aria-live="polite" hidden>
+        <div><span>الأسهم الإضافية المطلوبة</span><strong id="average-shares">—</strong></div>
+        <div><span>المبلغ الإضافي مع الرسوم</span><strong id="average-amount">—</strong></div>
+        <div><span>المتوسط الجديد</span><strong id="average-new-cost">—</strong></div>
+      </div>
+      <p id="average-message" class="hint" role="status"></p>
+      <hr>
+      <h3>احسب الشراء من المبلغ المتوفر</h3>
+      <label class="field"><span>المبلغ المتوفر شامل الرسوم</span><div class="money-field"><input id="average-budget" inputmode="decimal" placeholder="مثال: 100.000"><b>د.ك</b></div></label>
+      <p class="hint">يستخدم سعر الشراء لتعديل التكلفة والرسوم المدخلة أعلاه.</p>
+      <div class="stock-entry-preview" id="average-budget-results" aria-live="polite" hidden>
+        <div><span>الأسهم الممكن شراؤها</span><strong id="average-budget-shares">—</strong></div>
+        <div><span>المبلغ المستخدم</span><strong id="average-budget-spent">—</strong></div>
+        <div><span>المبلغ المتبقي</span><strong id="average-budget-remaining">—</strong></div>
+        <div><span>متوسط التكلفة بعد الشراء</span><strong id="average-budget-cost">—</strong></div>
+      </div>
+      <p class="hint" id="average-budget-message" role="status"></p>
+      <p class="legal-note">محاكاة حسابية فقط، وليست توصية بالشراء. زيادة الكمية تزيد المبلغ المعرّض للخسارة؛ النتيجة لا تغيّر محفظتك أو تنفذ صفقة.</p>
+      <div class="dialog-actions single"><button type="button" class="secondary close-dialog">إغلاق</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="confirm-dialog">
+    <div class="dialog-heading"><h2>تأكيد</h2></div>
+    <p id="confirm-message" class="confirm-message"></p>
+    <div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">إلغاء</button><button type="button" class="primary" id="confirm-ok">نعم، كمّل</button></div>
+  </dialog>
+
+  <dialog id="pin-dialog">
+    <form id="pin-form">
+      <div class="dialog-heading"><h2 id="pin-title">تفعيل القفل</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <label class="field" id="pin-current-field" hidden><span>الرمز الحالي</span><input id="pin-current" type="password" inputmode="numeric" autocomplete="off" maxlength="8"></label>
+      <div id="pin-new-fields">
+        <label class="field"><span>رمز جديد (٤ إلى ٨ أرقام)</span><input id="pin-new" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8"></label>
+        <label class="field"><span>أعد كتابة الرمز</span><input id="pin-confirm" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8"></label>
+      </div>
+      <p class="form-error" id="pin-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">حفظ</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="onboarding-dialog" class="onboarding-dialog">
+    <div id="onboarding-root"></div>
+  </dialog>
+
+  <dialog id="settings-dialog">
+    <form id="settings-form">
+      <div class="dialog-heading"><h2>الإعدادات</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <label class="field"><span>الدخل الشهري</span><div class="money-field"><input id="settings-income" inputmode="decimal"><b>د.ك</b></div></label>
+      <label class="field"><span>ميزانية المصروف الشهرية</span><div class="money-field"><input id="settings-budget" inputmode="decimal"><b>د.ك</b></div></label>
+      <label class="field"><span>رصيد الكاش الحالي</span><div class="money-field"><input id="settings-cash" inputmode="decimal"><b>د.ك</b></div></label>
+      <div class="form-grid">
+        <label class="field"><span>يوم نزول المعاش</span><input id="settings-salary-day" inputmode="numeric" type="number" min="1" max="31"></label>
+        <label class="field"><span>احتياطي أمان لا ينصرف</span><div class="money-field"><input id="settings-safety-buffer" inputmode="decimal"><b>د.ك</b></div></label>
+      </div>
+      <label class="field"><span>دفعات بطاقات ائتمان محجوزة</span><div class="money-field"><input id="settings-credit-card-reserve" inputmode="decimal"><b>د.ك</b></div></label>
+      <label class="field"><span>قيمة الاستثمارات الحالية</span><div class="money-field"><input id="settings-invested" inputmode="decimal"><b>د.ك</b></div></label>
+      <label class="field"><span>قيمة الأصول الأخرى</span><div class="money-field"><input id="settings-assets" inputmode="decimal"><b>د.ك</b></div></label>
+      <p class="form-error" id="settings-error" role="alert"></p>
+      <section class="data-actions"><h3>بياناتك</h3><p>تُحفظ على هذا الجهاز فقط. صدّر نسخة احتياطية قبل مسح Safari أو تغيير الجهاز. <a href="privacy.html">اقرأ سياسة الخصوصية</a>.</p><div class="row wrap"><button type="button" class="secondary" id="export-data">تصدير نسخة</button><label class="secondary file-button">استيراد نسخة<input type="file" id="import-data" accept="application/json" hidden></label><button type="button" class="danger" id="reset-data">مسح جميع البيانات</button></div></section>
+      <section class="data-actions" id="security-actions"><h3>الحماية</h3><p><strong id="lock-status">القفل غير مفعّل</strong><br>القفل يمنع فتح التطبيق بدون الرمز، لكنه لا يشفّر البيانات المخزنة في المتصفح. ما فيه استرجاع للرمز لو نسيته.</p><div class="row wrap"><button type="button" class="secondary" id="lock-setup">تفعيل القفل</button><button type="button" class="secondary" id="lock-now" hidden>قفل الحين</button><button type="button" class="danger" id="lock-disable" hidden>إيقاف القفل</button><button type="button" class="secondary" id="restore-snapshot" hidden>استرجاع النسخة التلقائية</button></div></section>
+      <section class="data-actions"><h3>إشعارات بوبيان</h3><p>خلّ الآيفون يجمع إشعارات بوبيان في ملف يقرأه فلس.</p><button type="button" class="secondary" data-action="bank-automation-guide">عرض خطوات الربط</button>
+        <div class="bank-fields"><p><strong>حقول الإشعار في الاختصار:</strong> <span id="bank-field-summary"></span><br><small>فلس يفهم الإشعار بأي ترتيب. غيّر هنا فقط إذا اخترت الحقول بنفسك في الاختصار.</small></p>
+          <div class="bank-field-row"><label class="field"><span>الأول</span><select data-bank-field="0"></select></label><label class="field"><span>الثاني</span><select data-bank-field="1"></select></label><label class="field"><span>الثالث</span><select data-bank-field="2"></select></label></div>
+          <button type="button" class="ghost small" id="bank-field-reset">رجوع للافتراضي</button></div></section>
+      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">حفظ</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="bank-automation-dialog" class="wide-dialog">
+    <form method="dialog">
+      <div class="dialog-heading"><div><h2>ربط إشعارات بوبيان بالآيفون</h2><span class="eyebrow">إعداد مرة وحدة · دقيقتين</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="notice privacy-notice"><p>🔒 فلس ما يدخل حسابك البنكي. الآيفون يحفظ نص الإشعار في ملف على جهازك، وفلس يقرأه لما تطلب.</p></div>
+      <ol class="setup-steps">
+        <li><strong>في تطبيق «الاختصارات»</strong><span>الأتمتة ← ＋ ← «إشعار» ← اختر بوبيان ← «تشغيل فوراً».</span></li>
+        <li><strong>أضف «إلحاق بملف نصي»</strong><span>النص: <code>التاريخ الحالي</code> ثم سطر جديد ثم <code>مدخل الاختصار</code>. اسم الملف: <code>fils-bank.txt</code>. ما تحتاج تختار حقول أو تنسيق.</span></li>
+        <li><strong>في فلس</strong><span>اضغط «جلب الإشعارات» واختر fils-bank.txt من مجلد Shortcuts. المكرر ما ينضاف.</span></li>
+      </ol>
+      <p class="hint">جهازك أقدم من iOS 27؟ اختر «رسالة» بدل «إشعار» وحدد مرسل بوبيان.</p>
+      <p class="notice warning"><strong>مؤكد من رسائلك:</strong> إشعار البطاقة (المبلغ، نوع البطاقة، التاجر) و«خصم من حساب… الرصيد». <strong>تجريبي:</strong> باقي الصيغ (السحب، التحويل، الراتب، الاسترداد) لين توصلنا رسالة حقيقية منها. أي إشعار ما ينفهم يفتح لك شاشة اللصق، ولا يضيف رقماً غير مؤكد.</p>
+      <p class="hint">رموز التحقق والعمليات المرفوضة وتسديد البطاقة تُتجاهل. كل عملية جديدة تنتظر اعتمادك قبل ما تدخل الحسابات. لو إشعار ما انفهم، انسخه من «لصق رسالة» وأرسله لنا عشان نعلّم فلس عليه.</p>
+      <div class="dialog-actions single"><button type="button" class="primary close-dialog">تم</button></div>
+    </form>
+  </dialog>
+
+  <div class="lock-screen" id="lock-screen" role="dialog" aria-modal="true" aria-label="فلس مقفل" hidden>
+    <form id="lock-form" class="lock-card">
+      <img src="icons/fils-mark.svg" width="64" height="64" alt="">
+      <h1>فلس مقفل</h1>
+      <label class="field"><span>اكتب الرمز</span><input id="lock-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8"></label>
+      <p class="form-error" id="lock-error" role="alert"></p>
+      <button type="submit" class="primary" id="lock-submit">فتح</button>
+      <button type="button" class="ghost small" id="lock-forgot">نسيت الرمز</button>
+    </form>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <noscript><div class="noscript">فلس يحتاج JavaScript للعمل.</div></noscript>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
