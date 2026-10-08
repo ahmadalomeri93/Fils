@@ -1,0 +1,46 @@
+# مشروع تطبيق فلس للآيفون — يتولّد بـXcodeGen (على سيرفر GitHub، لأن ماك 2018 ما يشغّل Xcode 26)
+name: Fils
+options:
+  bundleIdPrefix: com.yusfco
+  deploymentTarget:
+    iOS: "15.0"
+  developmentLanguage: ar
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    DEVELOPMENT_TEAM: "$(APPLE_TEAM_ID)"
+    CODE_SIGN_STYLE: Automatic
+targets:
+  Fils:
+    type: application
+    platform: iOS
+    sources:
+      - path: Fils
+      - path: ../dist
+        name: web
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yusfco.fils
+        PRODUCT_NAME: "فلس"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleDisplayName: "فلس"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.finance
+    info:
+      path: Fils/Info.plist
+      properties:
+        CFBundleDisplayName: "فلس"
+        CFBundleDevelopmentRegion: ar
+        CFBundleLocalizations: [ar]
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIRequiresFullScreen: true
+        UIUserInterfaceStyle: Automatic
+        ITSAppUsesNonExemptEncryption: false
+        NSCameraUsageDescription: "فلس يستخدم الكاميرا عشان تصوّر عقد القرض أو كشف الحساب."
+        NSPhotoLibraryUsageDescription: "فلس يحتاج الصور عشان تختار صورة عقد القرض أو المحفظة."

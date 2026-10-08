@@ -1,0 +1,63 @@
+# يبني تطبيق فلس للآيفون على ماك GitHub (Xcode 26)، ويرفعه لـTestFlight إذا مفاتيح Apple موجودة.
+name: iOS app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios-app]
+    paths: ["ios/**", "dist/**", ".github/workflows/ios.yml"]
+
+jobs:
+  build:
+    runs-on: macos-15
+    env:
+      HAS_APPLE_KEY: ${{ secrets.ASC_KEY_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Xcode 26
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Build for simulator (check it compiles)
+        if: env.HAS_APPLE_KEY != 'true'
+        run: |
+          cd ios
+          xcodebuild -project Fils.xcodeproj -scheme Fils -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build | tail -20
+
+      - name: Archive and upload to TestFlight
+        if: env.HAS_APPLE_KEY == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          mkdir -p ~/private_keys
+          echo "$ASC_KEY_P8" > ~/private_keys/AuthKey_$ASC_KEY_ID.p8
+          cd ios
+          AUTH="-allowProvisioningUpdates -authenticationKeyPath $HOME/private_keys/AuthKey_$ASC_KEY_ID.p8 -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
+          xcodebuild -project Fils.xcodeproj -scheme Fils -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/Fils.xcarchive \
+            APPLE_TEAM_ID=$APPLE_TEAM_ID CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            $AUTH archive | tail -20
+          cat > build/export.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath build/Fils.xcarchive -exportOptionsPlist build/export.plist \
+            -exportPath build/export $AUTH | tail -20
+          rm -f ~/private_keys/AuthKey_$ASC_KEY_ID.p8
