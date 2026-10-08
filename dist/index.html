@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="حوّش">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; connect-src 'self' https://api.gold-api.com; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; connect-src 'self' https://api.gold-api.com https://broken-queen-f0ed.ahmadalomeri.workers.dev; object-src 'none'; base-uri 'none'; form-action 'self'">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23101b36'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%23d5ff45' stroke='%23f0ff9a' stroke-width='3'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='34' font-family='Arial' font-weight='700' fill='%23081126'%3E%D8%AD%3C/text%3E%3C/svg%3E">
@@ -676,7 +676,8 @@
   <dialog id="bank-automation-dialog" class="wide-dialog web-only">
     <form method="dialog">
       <div class="dialog-heading"><div><h2>ربط الإشعارات والرسائل بالآيفون</h2><span class="eyebrow">إعداد مرة وحدة · دقيقتين</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
-      <div class="notice privacy-notice"><p>🔒 حوّش ما يدخل حساباتك المالية ولا يطلب بيانات دخولها. الآيفون يحفظ نص الإشعار أو الرسالة في ملف على جهازك، وحوّش يقرأه لما تطلب.</p></div>
+      <div class="notice privacy-notice"><p>🔒 حوّش ما يدخل حساباتك المالية ولا يطلب بيانات دخولها. بطريقة الملف: الآيفون يحفظ نص الإشعار أو الرسالة في ملف على جهازك، وحوّش يقرأه لما تطلب. بالاستقبال التلقائي: النص يمر على صندوق خاص فيك بموقعك ويُحذف أول ما يوصل جوالك.</p></div>
+      <div class="notice inbox-promo"><p><strong>الأسهل: الاستقبال التلقائي.</strong> إجراء واحد بالأتمتة بدل ملف، والإشعارات توصل حوّش لحالها لما تفتحه.</p><button type="button" class="secondary" id="inbox-open">افتح الاستقبال التلقائي</button></div>
       <p class="hint">اختر طريقة وحدة بس. لو ربطت الاثنتين ممكن توصل نفس العملية مرتين.</p>
       <details class="route-section">
         <summary><strong>إشعارات التطبيق</strong><small>iOS 27 وأحدث</small></summary>
@@ -699,6 +700,42 @@
       </details>
       <p class="notice warning"><strong>مؤكد من رسائلك:</strong> إشعار البطاقة (المبلغ، نوع البطاقة، التاجر) و«خصم من حساب… الرصيد» و«تحويل ومض… الرصيد المتوفر» و«دفع… من حساب… الرصيد». <strong>تجريبي:</strong> باقي الصيغ (السحب، الراتب، الاسترداد) لين توصلنا رسالة حقيقية منها. أي إشعار ما ينفهم يفتح لك شاشة اللصق، ولا يضيف رقماً غير مؤكد.</p>
       <p class="hint">رموز التحقق والعمليات المرفوضة وتسديد البطاقة تُتجاهل. كل عملية جديدة تنتظر اعتمادك قبل ما تدخل الحسابات. لو إشعار ما انفهم، انسخه من «لصق رسالة» وأرسله لنا عشان نعلّم حوّش عليه.</p>
+      <div class="dialog-actions single"><button type="button" class="primary close-dialog">تم</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="inbox-dialog" class="wide-dialog web-only">
+    <form method="dialog">
+      <div class="dialog-heading"><div><h2>الاستقبال التلقائي</h2><span class="eyebrow">بدون ملف ولا زر جلب</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <p class="notice warning" id="inbox-browser-note" hidden>أنت فاتح حوّش من متصفح Safari، مو من أيقونته بالشاشة الرئيسية. بياناتك محفوظة في الأيقونة، فافتح حوّش منها وفعّل الاستقبال هناك.</p>
+      <p class="form-error" id="inbox-error" role="alert"></p>
+      <div id="inbox-off">
+        <p>الآيفون يرسل نص إشعارك لصندوق خاص فيك على موقعك، وحوّش يجلبه لحاله أول ما تفتحه. المكرر ما ينضاف، وكل عملية تنتظر اعتمادك.</p>
+        <div class="notice privacy-notice"><p>🔒 النص يمر على خدمة تشتغل بحساب Cloudflare حق موقعك، ويُحذف من الصندوق أول ما يوصل جوالك (وأقصى بقاء 30 يوم). الصندوق محمي بمفتاح سري عشوائي ينولد على جوالك ولا يعرفه غيرك.</p></div>
+        <button type="button" class="primary" id="inbox-enable">تفعيل الاستقبال</button>
+        <details class="inbox-restore">
+          <summary>عندك رابط من قبل؟</summary>
+          <label class="field"><span>الصق رابط الاختصار</span><input id="inbox-paste" type="url" inputmode="url" dir="ltr" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="…/api/in/…"></label>
+          <button type="button" class="secondary" id="inbox-restore">ربط بهالرابط</button>
+        </details>
+      </div>
+      <div id="inbox-on" hidden>
+        <p class="notice" id="inbox-status" role="status"></p>
+        <p class="notice warning" id="inbox-empty-warning" hidden></p>
+        <div class="inbox-actions">
+          <button type="button" class="primary" id="inbox-copy">نسخ الرابط</button>
+          <button type="button" class="secondary" id="inbox-sync">جلب الآن</button>
+        </div>
+        <label class="field" id="inbox-link-field" hidden><span>انسخ الرابط من هنا</span><input id="inbox-link" type="text" readonly dir="ltr" autocomplete="off"></label>
+        <p class="hint">«نسخ الرابط» ينسخ رابط صندوقك السري. لا ترسله لأحد.</p>
+        <ol class="setup-steps">
+          <li><strong>في تطبيق «الاختصارات»</strong><span>الأتمتة ← أتمتة الإشعار حقك ← احذف كل إجراءات «إلحاق بملف نصي» (<code>Append to Text File</code>) وأضف إجراء واحد: <code>Get Contents of URL</code>.</span></li>
+          <li><strong>الصق الرابط في خانة URL</strong><span>اضغط السهم (<code>Show More</code>)، <code>Method</code> اختر <code>POST</code>، و<code>Request Body</code> اختر <code>Form</code>.</span></li>
+          <li><strong>أضف ثلاثة حقول (<code>Add new field</code>) نوعها <code>Text</code></strong><span>الاسم <code>title</code> وقيمته <code>Notification</code> ثم <code>Title</code>. الاسم <code>subtitle</code> وقيمته <code>Notification</code> ثم <code>Subtitle</code>. الاسم <code>body</code> وقيمته <code>Notification</code> ثم <code>Body</code>. لا تحط <code>Notification</code> كاملة، تنرسل فاضية.</span></li>
+          <li><strong>جرّب</strong><span>خلّ «تشغيل فوراً» شغال، واستنّ إشعاراً حقيقياً، ثم افتح حوّش. لو ربطت رسائل SMS: حقل واحد اسمه <code>body</code> وقيمته <code>Shortcut Input</code>.</span></li>
+        </ol>
+        <button type="button" class="ghost small danger-link" id="inbox-stop">إيقاف الاستقبال</button>
+      </div>
       <div class="dialog-actions single"><button type="button" class="primary close-dialog">تم</button></div>
     </form>
   </dialog>

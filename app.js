@@ -9,6 +9,7 @@ import { GOLD_PRICE_URL, goldSummary, mountGold, priceFromApi, sanitizeGold } fr
 import { decideUpdate, installedVersion, remoteVersion, staticCacheNames, versionLabel } from "./app-update.js";
 import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, notificationFingerprints, parseBankNotification, splitBankMessages, splitStamp, BANK_FIELDS, DEFAULT_FIELD_ORDER } from "./bank-notifications.js";
 import { parsePortfolioLink, newPortfolioHoldings } from "./portfolio-import.js";
+import { INBOX_BASE, ackInbox, agoLabel, claimInbox, fetchInbox, inboxErrorMessage, inboxLink, itemsToBankText, newInboxKey, parseInboxKey, readInboxConfig, unclaimInbox, writeInboxConfig } from "./inbox.js";
 import {
   categories,
   commitmentMatches,
@@ -647,17 +648,18 @@ function showBankManual(notification) {
   openDialog($("#bank-dialog"));
 }
 
-function reportBankSummary(summary) {
+function reportBankSummary(summary, { auto = false } = {}) {
   const parts = [];
   if (summary.queued) parts.push(summary.queued === 1 && summary.total === 1 ? "وصل إشعار — راجعه واعتمده" : `أضفت ${countLabel(summary.queued, "transaction")} للمراجعة`);
   if (summary.possible) parts.push(`${countLabel(summary.possible, "transaction")} قد تكون مكررة`);
   if (summary.duplicates) parts.push(`${countLabel(summary.duplicates, "transaction")} مكررة تجاهلتها`);
-  if (summary.drafts) parts.push(`${countLabel(summary.drafts, "notification")} تحتاج مبلغاً بالدينار`);
+  if (summary.drafts) parts.push(`${countLabel(summary.drafts, "notification")} تحتاج مبلغاً بالدينار${auto ? " (افتح «العمليات»)" : ""}`);
   if (summary.ignored.length) parts.push(summary.ignored[0] + (summary.ignored.length > 1 ? ` (+${(summary.ignored.length - 1).toLocaleString("ar-KW-u-nu-latn")})` : ""));
   if (!parts.length && summary.alreadyRead && !summary.manual.length) parts.push("ما فيه رسائل جديدة من آخر مرة");
-  if (summary.queued || summary.drafts) switchView("transactions");
+  // الجلب التلقائي ما ينقلك لصفحة ثانية ولا يفتح نافذة وانت فاتح التطبيق لشي ثاني
+  if ((summary.queued || summary.drafts) && !auto) switchView("transactions");
   if (parts.length) toast(parts.join(" · "));
-  if (summary.manual.length && !summary.drafts) showBankManual(summary.manual[0]);
+  if (summary.manual.length && !summary.drafts && !auto) showBankManual(summary.manual[0]);
 }
 
 function describeNotification(notification) {
@@ -2817,6 +2819,196 @@ function openBankAutomationGuide() {
   openDialog($("#bank-automation-dialog"));
 }
 
+/* ===== الاستقبال التلقائي: صندوق على موقعك يستقبل نص الإشعار من الاختصار، وحوّش يجلبه ويؤكد استلامه ===== */
+const BANK_CARD_COPY_WEB = "الآيفون يجمع إشعارات عملياتك أو رسائل SMS في ملف، اضغط «جلب الإشعارات» واختره.";
+const BANK_CARD_COPY_INBOX = "الإشعارات توصلك تلقائياً أول ما تفتح حوّش. تقدر برضو تلصق رسالة أو ترفع ملف.";
+const storedInbox = IS_NATIVE ? null : readInboxConfig();
+let inboxConfig = storedInbox && !storedInbox.pending ? storedInbox : null;
+let inboxPendingKey = storedInbox?.pending ? storedInbox.key : "";
+let inboxBusy = false;
+let inboxLastAutoMs = 0;
+let inboxMeta = null;
+let inboxAuthWarned = false;
+
+function renderInbox() {
+  if (IS_NATIVE) return;
+  const on = Boolean(inboxConfig);
+  $("#inbox-off").hidden = on;
+  $("#inbox-on").hidden = !on;
+  // في تبويب Safari التخزين غير تخزين أيقونة الشاشة الرئيسية: ما نفعّل ولا نجلب من هناك
+  const inTab = inBrowserTab();
+  $("#inbox-browser-note").hidden = !inTab;
+  $("#inbox-enable").disabled = inTab;
+  $("#inbox-restore").disabled = inTab;
+  const copy = $("#bank-card-copy .web-only");
+  if (copy) copy.textContent = on ? BANK_CARD_COPY_INBOX : BANK_CARD_COPY_WEB;
+  if (!on) return;
+  const last = inboxMeta?.lastReceivedAt ? `آخر إشعار وصل الصندوق ${agoLabel(inboxMeta.lastReceivedAt)}` : "لسا ما وصل الصندوق أي إشعار";
+  const synced = inboxConfig.lastSyncAt ? ` · آخر جلب ${agoLabel(inboxConfig.lastSyncAt)}` : "";
+  setText("#inbox-status", `✓ مفعّل (…${inboxConfig.key.slice(-4)}). ${last}${synced}`);
+  const empty = inboxMeta?.emptyCount ?? 0;
+  const warning = $("#inbox-empty-warning");
+  warning.hidden = empty === 0;
+  if (empty) warning.textContent = `وصلت الصندوق إشعارات بدون نص (${empty.toLocaleString("ar-KW-u-nu-latn")}). افتح الأتمتة واختر Title وSubtitle وBody من Notification، لا تحط Notification كاملة.`;
+}
+
+function openInbox() {
+  if (IS_NATIVE) return;
+  if ($("#bank-automation-dialog").open) closeDialog($("#bank-automation-dialog"));
+  $("#inbox-error").textContent = "";
+  $("#inbox-link-field").hidden = true;
+  renderInbox();
+  openDialog($("#inbox-dialog"));
+  if (inboxConfig) syncInbox({ manual: true, quiet: true });
+}
+
+async function syncInbox({ manual = false, quiet = false, force = false } = {}) {
+  if (IS_NATIVE || !inboxConfig) return;
+  if (inboxBusy) { if (manual && !quiet) toast("جاري الجلب…"); return; }
+  if (lockedNow || inBrowserTab()) return; // القفل: يُعاد بعد فتحه. تبويب Safari: تخزينه غير تخزين الأيقونة
+  if (!manual && !force && Date.now() - inboxLastAutoMs < 15_000) return;
+  inboxBusy = true;
+  inboxLastAutoMs = Date.now();
+  let succeeded = false;
+  const note = (message) => { if (manual && !quiet) toast(message); };
+  try {
+    const total = { total: 0, alreadyRead: 0, queued: 0, duplicates: 0, possible: 0, drafts: 0, ignored: [], manual: [] };
+    let received = 0;
+    for (let round = 0; round < 5; round += 1) {
+      const result = await fetchInbox(inboxConfig.key);
+      if (!result.ok) {
+        if (manual) $("#inbox-error").textContent = inboxErrorMessage(result.error);
+        else if (result.error === "unauthorized" && !inboxAuthWarned) { inboxAuthWarned = true; toast("الاستقبال التلقائي وقف: الصندوق ما يعرف مفتاحك. افتح «المزيد» ← «طريقة الربط» وفعّله من جديد."); }
+        return;
+      }
+      if (manual) $("#inbox-error").textContent = "";
+      inboxMeta = result.data.meta ?? null;
+      const items = Array.isArray(result.data.items) ? result.data.items : [];
+      if (!items.length) break;
+      const summary = ingestBankText(itemsToBankText(items), { fromFile: true });
+      // ما نأكّد الاستلام إلا إذا انحفظ عندك فعلاً؛ لو فشل الحفظ يبقى الإشعار في الصندوق
+      if (!storageAvailable) { toast("ما قدرت أحفظ على الجهاز. الإشعارات باقية في الصندوق."); return; }
+      received += items.length;
+      for (const field of ["total", "alreadyRead", "queued", "duplicates", "possible", "drafts"]) total[field] += summary[field];
+      total.ignored.push(...summary.ignored);
+      total.manual.push(...summary.manual);
+      await ackInbox(inboxConfig.key, items.map((item) => item.id));
+      if (!result.data.more) break;
+    }
+    inboxConfig = { ...inboxConfig, lastSyncAt: new Date().toISOString(), lastCount: received };
+    writeInboxConfig(inboxConfig);
+    if (received) reportBankSummary(total, { auto: true });
+    else note("ما فيه إشعارات جديدة بالصندوق");
+    succeeded = true;
+  } finally {
+    inboxBusy = false;
+    if (!succeeded) inboxLastAutoMs = 0; // الفشل ما يحبس المحاولة الجاية خمس عشرة ثانية
+    renderInbox();
+  }
+}
+
+async function enableInbox() {
+  const button = $("#inbox-enable");
+  const error = $("#inbox-error");
+  error.textContent = "";
+  if (inBrowserTab()) { renderInbox(); return; }
+  button.disabled = true;
+  try {
+    const key = inboxPendingKey || newInboxKey();
+    // نحفظ المفتاح قبل الطلب: لو الخادم حجز الصندوق وضاع الرد، نعيد بنفس المفتاح (الحجز نفسه مرتين يمر)
+    if (!writeInboxConfig({ key, enabledAt: "", lastSyncAt: "", lastCount: 0, pending: true })) {
+      error.textContent = "ما قدرت أحفظ المفتاح على الجهاز. افتح حوّش من أيقونة الشاشة الرئيسية وجرّب مرة ثانية.";
+      return;
+    }
+    inboxPendingKey = key;
+    const result = await claimInbox(key);
+    if (!result.ok) {
+      if (result.error === "taken" || result.error === "unauthorized") { inboxPendingKey = ""; writeInboxConfig(null); }
+      const retry = result.error === "network" || result.error === "service" || result.error === "server" ? " اضغط «تفعيل الاستقبال» مرة ثانية." : "";
+      error.textContent = inboxErrorMessage(result.error) + retry;
+      return;
+    }
+    inboxConfig = { key, enabledAt: new Date().toISOString(), lastSyncAt: "", lastCount: 0, pending: false };
+    inboxPendingKey = "";
+    if (!writeInboxConfig(inboxConfig)) {
+      inboxConfig = null;
+      error.textContent = "ما قدرت أحفظ المفتاح على الجهاز. افتح حوّش من أيقونة الشاشة الرئيسية وجرّب مرة ثانية.";
+      await unclaimInbox(key);
+      writeInboxConfig(null);
+      return;
+    }
+    inboxMeta = null;
+    renderInbox();
+  } finally { button.disabled = inBrowserTab(); }
+}
+
+async function restoreInbox() {
+  const error = $("#inbox-error");
+  error.textContent = "";
+  if (inBrowserTab()) { renderInbox(); return; }
+  const key = parseInboxKey($("#inbox-paste").value);
+  if (!key) { error.textContent = "هذا مو رابط الاستقبال. انسخه كامل من خانة URL في الاختصار (يحتوي على /api/in/)."; return; }
+  const result = await claimInbox(key);
+  if (!result.ok) { error.textContent = inboxErrorMessage(result.error); return; }
+  inboxConfig = { key, enabledAt: new Date().toISOString(), lastSyncAt: "", lastCount: 0, pending: false };
+  inboxPendingKey = "";
+  writeInboxConfig(inboxConfig);
+  $("#inbox-paste").value = "";
+  inboxMeta = null;
+  renderInbox();
+  syncInbox({ manual: true, quiet: true });
+}
+
+async function stopInbox() {
+  if (!inboxConfig) return;
+  // لو انقفل التطبيق وانت تجاوب، ما نفتح النافذة فوق شاشة القفل
+  const reopen = () => { if (!lockedNow) openDialog($("#inbox-dialog")); };
+  const ok = await askConfirm("توقف الاستقبال التلقائي؟ يتمسح الصندوق من موقعك (اللي ما وصل جوالك يضيع) والرابط القديم يوقف يشتغل.", { okLabel: "نعم، أوقفه", danger: true });
+  if (!ok) { reopen(); return; }
+  const result = await unclaimInbox(inboxConfig.key);
+  if (!result.ok && result.error !== "unauthorized") {
+    $("#inbox-error").textContent = inboxErrorMessage(result.error);
+    reopen();
+    return;
+  }
+  inboxConfig = null;
+  inboxMeta = null;
+  inboxPendingKey = "";
+  writeInboxConfig(null);
+  reopen();
+  renderInbox();
+  toast("وقفت الاستقبال التلقائي");
+}
+
+async function copyInboxLink() {
+  if (!inboxConfig) return;
+  const link = inboxLink(inboxConfig.key, INBOX_BASE);
+  try {
+    await navigator.clipboard.writeText(link);
+    $("#inbox-link-field").hidden = true;
+    toast("نسخت الرابط. الصقه في خانة URL بالاختصار");
+  } catch {
+    const field = $("#inbox-link");
+    $("#inbox-link-field").hidden = false;
+    field.value = link;
+    field.focus(); field.select();
+    toast("اضغط مطولاً على الرابط واختر «نسخ»");
+  }
+}
+
+function bindInboxEvents() {
+  if (IS_NATIVE) return;
+  $("#inbox-open").addEventListener("click", openInbox);
+  $("#inbox-enable").addEventListener("click", enableInbox);
+  $("#inbox-restore").addEventListener("click", restoreInbox);
+  $("#inbox-copy").addEventListener("click", copyInboxLink);
+  $("#inbox-sync").addEventListener("click", () => syncInbox({ manual: true }));
+  $("#inbox-stop").addEventListener("click", () => { closeDialog($("#inbox-dialog")); stopInbox(); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncInbox(); });
+  window.addEventListener("online", () => syncInbox({ force: true }));
+  renderInbox();
+}
+
 
 let pendingPortfolioImport = [];
 function handlePortfolioLink() {
@@ -3116,6 +3308,7 @@ function unlockApp() {
     deferredBankText = "";
     reportBankSummary(ingestBankText(text));
   }
+  syncInbox();
 }
 function updateLockCountdown() {
   clearInterval(lockTimer);
@@ -3702,7 +3895,7 @@ function initialize() {
   $("#transaction-category").innerHTML = categories.map((category) => `<option value="${escapeHTML(category)}">${escapeHTML(category)}</option>`).join("");
   $("#loan-type").innerHTML = debtTypes.map((type) => `<option value="${escapeHTML(type)}">${escapeHTML(type)}</option>`).join("");
   updateCommitmentCategoryFilterOptions();
-  bindEvents(); renderBankFieldOrder(); setupInstall(); renderAll({ investmentInputs: true }); captureFinancialSnapshot();
+  bindEvents(); bindInboxEvents(); renderBankFieldOrder(); setupInstall(); renderAll({ investmentInputs: true }); captureFinancialSnapshot();
   if (lockRecord) lockApp();
   const linkHandled = handlePortfolioLink() || handleBankAutomationLink();
   if (!linkHandled && !lockedNow) switchView(location.hash.slice(1) || "dashboard", false);
@@ -3717,6 +3910,7 @@ function initialize() {
   if (updateSupported() && navigator.serviceWorker.controller) readInstalledVersion().then((version) => { startupVersion = version; });
   confirmUpdateAfterReload();
   startNative();
+  syncInbox();
 }
 
 /* داخل التطبيق: نربط البصمة والتذكيرات ونعلم المستخدم لو رجّعنا بياناته من النسخة المحفوظة */
