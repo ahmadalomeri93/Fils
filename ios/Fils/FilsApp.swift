@@ -25,6 +25,16 @@ struct FilsWebView: UIViewRepresentable {
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
 
+        // ميزات الآيفون (Face ID والتذكيرات) تنحقن بدون تعديل ملفات الموقع
+        let features = context.coordinator.features
+        let content = config.userContentController
+        content.add(features, name: "hawwesh")
+        content.addUserScript(WKUserScript(source: features.bootstrapScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        if let url = Bundle.main.url(forResource: "native-bridge", withExtension: "js"),
+           let bridge = try? String(contentsOf: url, encoding: .utf8) {
+            content.addUserScript(WKUserScript(source: bridge, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        }
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
@@ -33,6 +43,8 @@ struct FilsWebView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = false
         context.coordinator.webView = webView
+        features.webView = webView
+        features.lockOnLaunchIfNeeded()
         webView.load(URLRequest(url: URL(string: "\(BundleSchemeHandler.scheme)://fils/index.html")!))
         return webView
     }
@@ -41,6 +53,7 @@ struct FilsWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let schemeHandler = BundleSchemeHandler()
+        let features = NativeFeatures()
         weak var webView: WKWebView?
         private var downloadURLs: [ObjectIdentifier: URL] = [:]
 
