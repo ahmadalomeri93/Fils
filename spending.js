@@ -205,7 +205,7 @@ export function mountSpending(root, { getModel, onBudgetsChange }) {
         </div>
         <div class="section-heading"><div><span class="eyebrow">${esc(monthLabel(key))}${report.isCurrent ? ` · اليوم ${num(report.day)} من ${num(report.daysInMonth)}` : ""}</span><h2>الصرف الفعلي</h2></div>
           <strong class="sp-total">${esc(formatMoney(report.actualTotalFils))}</strong></div>
-        ${overallBudget > 0 ? `<div class="cu-bar"><span style="width:${Math.min(report.actualTotalFils / overallBudget * 100, 100)}%;background:${report.actualTotalFils > overallBudget ? "#cf3f3f" : "#365bff"}"></span></div>
+        ${overallBudget > 0 ? `<div class="cu-bar"><span style="width:${Math.min(report.actualTotalFils / overallBudget * 100, 100)}%;background:${report.actualTotalFils > overallBudget ? "#cf3f3f" : "#0f7a5f"}"></span></div>
           <p class="hint">من ميزانية الشهر الإجمالية ${esc(formatMoney(overallBudget))} (${num(Math.round(report.actualTotalFils / overallBudget * 100))}٪).</p>` : `<p class="hint">حدد ميزانية الشهر من الإعدادات لتظهر النسبة هنا.</p>`}
         ${chart.total ? `<div class="sp-stack" role="img" aria-label="توزيع الصرف حسب الفئة">${chart.segments.map((seg) => `<span style="flex:${seg.fils};background:var(--series-${seg.slot ?? "other"})" title="${esc(seg.category)}: ${esc(formatMoney(seg.fils))} (${num(Math.round(seg.pct * 100))}٪)"></span>`).join("")}</div>
           <ul class="sp-legend">${chart.legend.map((item) => `<li><i style="background:var(--series-${item.slot ?? "other"})"></i><span>${esc(item.category)}</span><b>${num(Math.round(item.pct * 100))}٪</b></li>`).join("")}</ul>` : ""}
