@@ -1,5 +1,5 @@
-# مشروع تطبيق فلس للآيفون — يتولّد بـXcodeGen (على سيرفر GitHub، لأن ماك 2018 ما يشغّل Xcode 26)
-name: Fils
+# مشروع تطبيق حوّش (فلس سابقاً) للآيفون — يتولّد بـXcodeGen (على سيرفر GitHub، لأن ماك 2018 ما يشغّل Xcode 26)
+name: Hawwesh
 options:
   bundleIdPrefix: com.yusfco
   deploymentTarget:
@@ -14,7 +14,7 @@ settings:
     DEVELOPMENT_TEAM: "$(APPLE_TEAM_ID)"
     CODE_SIGN_STYLE: Automatic
 targets:
-  Fils:
+  Hawwesh:
     type: application
     platform: iOS
     sources:
@@ -25,15 +25,15 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.yusfco.fils
-        PRODUCT_NAME: "فلس"
+        PRODUCT_BUNDLE_IDENTIFIER: com.yusfco.hawwesh
+        PRODUCT_NAME: "Hawwesh"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        INFOPLIST_KEY_CFBundleDisplayName: "فلس"
+        INFOPLIST_KEY_CFBundleDisplayName: "حوّش"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.finance
     info:
       path: Fils/Info.plist
       properties:
-        CFBundleDisplayName: "فلس"
+        CFBundleDisplayName: "حوّش"
         CFBundleDevelopmentRegion: ar
         CFBundleLocalizations: [ar]
         UILaunchScreen:
@@ -42,5 +42,5 @@ targets:
         UIRequiresFullScreen: true
         UIUserInterfaceStyle: Automatic
         ITSAppUsesNonExemptEncryption: false
-        NSCameraUsageDescription: "فلس يستخدم الكاميرا عشان تصوّر عقد القرض أو كشف الحساب."
-        NSPhotoLibraryUsageDescription: "فلس يحتاج الصور عشان تختار صورة عقد القرض أو المحفظة."
+        NSCameraUsageDescription: "حوّش يستخدم الكاميرا عشان تصوّر عقد القرض أو كشف الحساب."
+        NSPhotoLibraryUsageDescription: "حوّش يحتاج الصور عشان تختار صورة عقد القرض أو المحفظة."
