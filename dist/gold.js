@@ -124,9 +124,9 @@ export function priceFromApi(json, usdToKwd) {
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pct = (value) => `${value >= 0 ? "\u200E+" : "\u200E−"}${Math.abs(value).toLocaleString("ar-KW-u-nu-latn", { maximumFractionDigits: 1 })}٪`;
 const STATUS = {
-  buy: ["ok", "منطقة شراء مناسبة", "السعر الحين تحت سعر الشراء المستهدف."],
-  near: ["warn", "قريب من منطقة الشراء", "السعر أعلى من المستهدف بأقل من 2٪."],
-  wait: ["neutral", "انتظر", "السعر أعلى من المستهدف؛ الشراء الحين يرفع متوسط تكلفتك."],
+  buy: ["ok", "تحت سعرك المستهدف", "السعر الحين تحت سعر التذكير اللي حسبناه لك."],
+  near: ["warn", "قريب من سعرك المستهدف", "السعر أعلى من سعر التذكير بأقل من 2٪."],
+  wait: ["neutral", "فوق سعرك المستهدف", "السعر أعلى من سعر التذكير؛ أي شراء بهالسعر يرفع متوسط تكلفتك."],
   unknown: ["neutral", "نحتاج سعر", "حدّث السعر أو أدخله يدوياً."]
 };
 
@@ -137,7 +137,7 @@ export function mountGold(root, { getState, save, toast, fetchPrice }) {
     const fund = state.goals.find((goal) => /طوار/.test(goal.name));
     if (fund && fund.savedFils >= fund.targetFils) return "";
     const progress = fund ? ` (المجمّع ${formatMoney(fund.savedFils)} من ${formatMoney(fund.targetFils)})` : "";
-    return `<div class="notice warning"><p><strong>تذكير من خطتك:</strong> لا شراء ذهب جديد قبل اكتمال صندوق الطوارئ${esc(progress)}. المؤشر تحت للمتابعة فقط.</p></div>`;
+    return `<div class="notice warning"><p><strong>تذكير من خطتك:</strong> صندوق الطوارئ ما اكتمل${esc(progress)}، وخطتك تأجّل شراء ذهب جديد لين يكتمل. سعر التذكير تحت للمتابعة فقط.</p></div>`;
   }
 
   function render() {
@@ -170,21 +170,21 @@ export function mountGold(root, { getState, save, toast, fetchPrice }) {
       </section>
 
       <section class="panel gold-signal ${tone}">
-        <div class="section-heading"><div><span class="eyebrow">مؤشر من الأسعار المسجلة</span><h2>متى الشراء القادم؟</h2></div><span class="status-badge ${tone}">${esc(label)}</span></div>
+        <div class="section-heading"><div><span class="eyebrow">محسوب من الأسعار اللي سجلتها</span><h2>سعرك المستهدف للتذكير</h2></div><span class="status-badge ${tone}">${esc(label)}</span></div>
         <p>${esc(hint)}</p>
         <div class="metric-grid">
-          <article class="metric"><span>اشترِ إذا نزل غرام 24 إلى</span><strong>${signal.target ? esc(formatMoney(signal.target)) : "—"}</strong></article>
+          <article class="metric"><span>ذكّرني إذا نزل غرام 24 إلى</span><strong>${signal.target ? esc(formatMoney(signal.target)) : "—"}</strong></article>
           <article class="metric"><span>تربح إذا بعت فوق</span><strong>${signal.profitPrice ? esc(formatMoney(signal.profitPrice)) : "—"}</strong></article>
         </div>
         <ul class="gold-basis">
-          ${summary.avgCost24 ? `<li>متوسط تكلفتك ${esc(formatMoney(summary.avgCost24))}؛ الشراء تحته بـ3٪ ينزّل المتوسط.</li>` : ""}
+          ${summary.avgCost24 ? `<li>متوسط تكلفتك ${esc(formatMoney(summary.avgCost24))}؛ المستهدف أقل منه بـ3٪ أو أكثر.</li>` : ""}
           ${signal.month ? `<li>آخر 30 يوم: متوسط ${esc(formatMoney(signal.month.avg))} · أعلى ${esc(formatMoney(signal.month.high))} · أدنى ${esc(formatMoney(signal.month.low))} (${countLabel(signal.month.count, "price")}).</li>` : ""}
           ${signal.gapPct !== null ? `<li>السعر الحالي ${esc(pct(signal.gapPct))} عن المستهدف.</li>` : ""}
           ${after ? `<li>لو اشتريت 10 غرام عيار 24 بالسعر المستهدف، يصير متوسطك ${esc(formatMoney(after))}.</li>` : ""}
           <li>سعر الربح = متوسطك + ${Number(ui.goldSpreadPct).toLocaleString("ar-KW-u-nu-latn")}٪ فرق بيع المحل.</li>
           ${signal.learning ? "<li>البيانات قليلة: حدّث السعر يومياً عشان المؤشر يصير أدق.</li>" : ""}
         </ul>
-        <p class="hint">هذا مؤشر حسابي من أسعارك المسجلة، مو توقع للسوق ولا ضمان ربح.</p>
+        <p class="legal-note">مقارنة حسابية من الأسعار اللي سجلتها أنت. ليست توصية بشراء أو بيع الذهب ولا توقعاً للسوق ولا ضمان ربح. القرار قرارك.</p>
       </section>
 
       <section class="panel">

@@ -919,3 +919,22 @@ input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="
   .bottom-nav button { color: #b4bed2; }
   .bottom-nav button.active { background: #263659; }
 }
+
+/* تطبيق الآيفون (Capacitor): الصنف is-native يحطه app.js على <html> فقط داخل التطبيق.
+   web-only يختفي في التطبيق (التثبيت، ملاحظة Safari، زر تحديث الكاش)؛ native-only يظهر في التطبيق فقط. */
+html.is-native .web-only { display: none !important; }
+html:not(.is-native) .native-only { display: none !important; }
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 48px; margin: 0 0 6px; color: var(--text-strong); font-size: .92rem; font-weight: 600; cursor: pointer; }
+/* مفتاح الإيقاف: المسار والكرة البيضاء لازم يبعدون 3:1 على الأقل عن الخلفية في الفاتح والداكن (#7a859b = 3.7:1 على الأبيض و4.0:1 على بطاقة الداكن؛ tests/contrast.mjs يفحصه) */
+:root { --switch-off: #7a859b; }
+.switch-row input[role="switch"] { position: relative; flex: none; width: 51px; height: 31px; margin: 0; border-radius: 999px; background: var(--switch-off); appearance: none; -webkit-appearance: none; transition: background .2s; }
+.switch-row input[role="switch"]::after { content: ""; position: absolute; top: 2px; inset-inline-start: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35); transition: inset-inline-start .2s; }
+.switch-row input[role="switch"]:checked { background: var(--bank-blue); }
+.switch-row input[role="switch"]:checked::after { inset-inline-start: 22px; }
+.switch-row input[role="switch"]:disabled { opacity: .45; }
+.lock-card .secondary { width: 100%; }
+dialog.native-doc-dialog { width: min(calc(100% - 16px), 720px); max-height: 92vh; padding: 0 0 calc(18px + env(safe-area-inset-bottom)); }
+.native-doc-dialog .dialog-heading { position: sticky; top: 0; z-index: 1; padding: 16px 20px; background: var(--ivory); border-bottom: 1px solid var(--line); }
+.native-doc-dialog .native-doc-body { padding: 4px 8px 0; }
+.native-doc-dialog .page-title { padding: 10px 12px 0; }
+.native-doc-dialog .panel { box-shadow: none; }

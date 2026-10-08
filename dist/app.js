@@ -79,6 +79,11 @@ import {
 const STORAGE_KEY = "fils-state-v1";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+/* تطبيق الآيفون (Capacitor): في الموقع هذا يرجع false وما يتغير أي شي. native-bridge.js يتحمّل فقط داخل التطبيق. */
+const IS_NATIVE = globalThis.Capacitor?.isNativePlatform?.() === true;
+if (IS_NATIVE) document.documentElement.classList.add("is-native");
+let native = null;
+let nativeRestored = false;
 const commitmentCategories = ["إيجار", "كهرباء وماء", "إنترنت", "هاتف", "تأمين", "اشتراكات", "مدرسة / حضانة", "عامل منزلي", "نادي", "سيارة", "عائلة", "أخرى"];
 const debtTypes = ["شخصي", "استهلاكي", "سيارة", "عقاري", "بطاقة ائتمانية", "تقسيط", "أخرى"];
 
@@ -355,6 +360,26 @@ function loadState() {
   }
 }
 
+/* داخل التطبيق فقط: نحمّل الجسر، ولو التخزين المحلي فاضي والتطبيق عنده نسخة على ملف نرجّعها قبل أول قراءة.
+   أي فشل هنا ما يوقف التطبيق: يكمل بدون ميزات الآيفون. */
+const nativeHooks = {
+  getState: () => state,
+  hasPin: () => Boolean(lockRecord),
+  isLocked: () => lockedNow,
+  lock: () => lockApp(),
+  unlock: () => unlockApp(),
+  toast: (message, options) => toast(message, options)
+};
+if (IS_NATIVE) {
+  try {
+    native = (await import("./native-bridge.js")).createNativeBridge(nativeHooks);
+    nativeRestored = await native.restoreIfEmpty();
+  } catch (error) {
+    console.warn("Native bridge unavailable", error);
+    native = null;
+  }
+}
+
 let state = loadState();
 /* الحفظ يحاول في كل مرة: الفشل قد يكون مؤقتاً (مساحة ممتلئة أو نافذة خاصة)،
    فما نقفل الحفظ للأبد، ونخلي تحذيراً ظاهراً على الشاشة إلى أن ينجح (F11). */
@@ -363,11 +388,13 @@ function saveState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     storageAvailable = true;
     renderStorageWarning();
+    native?.stateSaved();
     return true;
   } catch (error) {
     storageAvailable = false;
     renderStorageWarning();
     console.error(error);
+    native?.stateSaved(); // النسخة على ملف التطبيق قد تنجح حتى لو التخزين المحلي امتلأ
     return false;
   }
 }
@@ -621,7 +648,7 @@ function showBankManual(notification) {
 
 function reportBankSummary(summary) {
   const parts = [];
-  if (summary.queued) parts.push(summary.queued === 1 && summary.total === 1 ? "وصل إشعار بوبيان — راجعه واعتمده" : `أضفت ${countLabel(summary.queued, "transaction")} للمراجعة`);
+  if (summary.queued) parts.push(summary.queued === 1 && summary.total === 1 ? "وصل إشعار من البنك — راجعه واعتمده" : `أضفت ${countLabel(summary.queued, "transaction")} للمراجعة`);
   if (summary.possible) parts.push(`${countLabel(summary.possible, "transaction")} قد تكون مكررة`);
   if (summary.duplicates) parts.push(`${countLabel(summary.duplicates, "transaction")} مكررة تجاهلتها`);
   if (summary.drafts) parts.push(`${countLabel(summary.drafts, "notification")} تحتاج مبلغاً بالدينار`);
@@ -657,6 +684,7 @@ function revealBankFeedback() {
 }
 
 function inBrowserTab() {
+  if (IS_NATIVE) return false;
   return /iPhone|iPad|iPod/.test(navigator.userAgent) && !(matchMedia("(display-mode: standalone)").matches || navigator.standalone === true);
 }
 
@@ -738,7 +766,7 @@ function financialContext(today = todayISO()) {
     spentFils,
     comparison: spendingComparison(state.transactions, today),
     flow: financialFlow({ incomeFils, debtPaymentsFils: debts.monthlyPaymentsFils, commitmentFils: commitments?.monthlyEquivalentFils ?? 0, expensesFils: spentFils }),
-    // F5: الفائض/العجز الشهري من نفس الدالة اللي يستخدمها المستشار والفحص وخطة الأهداف
+    // F5: الفائض/العجز الشهري من نفس الدالة اللي يستخدمها الخطة والفحص وخطة الأهداف
     living,
     surplus: monthlySurplus({ incomeFils, debtPaymentsFils: debts.monthlyPaymentsFils, commitmentsFils: commitments?.monthlyEquivalentFils ?? 0, livingFils: living.amountFils }),
     weekDue: {
@@ -850,7 +878,7 @@ function renderDashboard() {
     setText("#daily-guidance", `تقدر تصرف حتى ${formatMoney(Math.max(dailyRemaining, 0))} اليوم وتبقى التزاماتك محجوزة.`);
   }
 
-  // F5: نفس رقم المستشار والفحص والأهداف (monthlySurplus)، والمعيشة متوسط آخر 3 أشهر مكتملة بدون «قسط»
+  // F5: نفس رقم الخطة والفحص والأهداف (monthlySurplus)، والمعيشة متوسط آخر 3 أشهر مكتملة بدون «قسط»
   const surplus = context.surplus;
   const livingKnown = context.living.source !== "missing";
   setText("#flow-income", formatMoney(surplus.incomeFils));
@@ -863,7 +891,7 @@ function renderDashboard() {
   $("#flow-available").classList.toggle("amount-negative", livingKnown && surplus.surplusFils < 0);
   $("#flow-available").parentElement.classList.toggle("is-deficit", livingKnown && surplus.surplusFils < 0);
   setText("#flow-caption", (context.living.source === "transactions"
-    ? `المعيشة = متوسط آخر ${countLabel(context.living.months, "month")} مكتملة بدون الأقساط، ونفس الرقم في المستشار والأهداف.`
+    ? `المعيشة = متوسط آخر ${countLabel(context.living.months, "month")} مكتملة بدون الأقساط، ونفس الرقم في الخطة والأهداف.`
     : context.living.source === "budget"
       ? "المعيشة من ميزانيتك المسجلة لأن ما فيه 3 أشهر مكتملة من المصروفات."
       : "نحتاج 3 أشهر مكتملة من المصروفات أو ميزانية شهرية من الإعدادات لحساب الفائض.") +
@@ -1580,7 +1608,7 @@ function openOnboarding() {
   openDialog(dialog);
 }
 
-/* أقساط القروض النشطة + الالتزامات الشهرية — نفس مدخلات monthlySurplus في المستشار (F27) */
+/* أقساط القروض النشطة + الالتزامات الشهرية — نفس مدخلات monthlySurplus في صفحة الخطة (F27) */
 function monthlyFixedFils() {
   const commitmentsFils = state.monthlyCommitments.reduce((sum, item) => sum + monthlyCommitmentEquivalent(item), 0);
   return commitmentsFils + debtSummary(state.loans, { todayISO: todayISO(), payments: state.debtPayments }).monthlyPaymentsFils;
@@ -2623,7 +2651,8 @@ let startupVersion = null;  // نسخة الكاش لما انفتحت هذي ا
 let updateBusy = false;
 
 function updateSupported() {
-  return "serviceWorker" in navigator && typeof caches !== "undefined" && location.protocol !== "file:";
+  // في التطبيق التحديث يجي من App Store، ما فيه كاش ولا service worker
+  return !IS_NATIVE && "serviceWorker" in navigator && typeof caches !== "undefined" && location.protocol !== "file:";
 }
 
 async function readInstalledVersion() {
@@ -2732,13 +2761,13 @@ function loadOcrEngine() {
 
 async function importBankFile(file) {
   if (!file) return;
-  if (file.size > 5_000_000) { toast("الملف كبير؛ اختر ملف fils-bank.txt"); return; }
+  if (file.size > 5_000_000) { toast(IS_NATIVE ? "الملف كبير؛ اختر ملفاً نصياً أصغر" : "الملف كبير؛ اختر ملف fils-bank.txt"); return; }
   // ملف صورة أو PDF يرجع حروفاً غير مقروءة فتظهر رسائل وهمية (F51)
   const textish = !file.type || file.type.startsWith("text/") || /\.(?:txt|log|csv)$/i.test(file.name ?? "");
-  if (!textish) { toast("الملف مو نصي؛ اختر fils-bank.txt من مجلد Shortcuts"); return; }
+  if (!textish) { toast(IS_NATIVE ? "الملف مو نصي؛ اختر ملفاً نصياً (txt)" : "الملف مو نصي؛ اختر fils-bank.txt من مجلد Shortcuts"); return; }
   const text = await file.text();
   const summary = ingestBankText(text, { fromFile: true });
-  if (!summary.total && !summary.alreadyRead) { toast("الملف فاضي؛ تأكد من إعداد الاختصار"); return; }
+  if (!summary.total && !summary.alreadyRead) { toast(IS_NATIVE ? "ما لقيت إشعارات في الملف" : "الملف فاضي؛ تأكد من إعداد الاختصار"); return; }
   reportBankSummary(summary);
 }
 
@@ -2794,7 +2823,7 @@ function handlePortfolioLink() {
     }).join("");
     const count = newPortfolioHoldings(state.stockHoldings, pendingPortfolioImport).length;
     $("#portfolio-import-save").disabled = count === 0 || !storageAvailable;
-    setText("#portfolio-import-status", !storageAvailable ? "التخزين غير متاح؛ افتح الرابط في Safari لحفظ الأسهم." : count ? `جاهز لإضافة ${countLabel(count, "stock")}. الأسهم الموجودة عندك لن تتغير.` : "هالأسهم موجودة عندك بالفعل؛ ما راح نكررها.");
+    setText("#portfolio-import-status", !storageAvailable ? (IS_NATIVE ? "التخزين غير متاح على الجهاز الحين. سكّر التطبيق وافتحه من جديد." : "التخزين غير متاح؛ افتح الرابط في Safari لحفظ الأسهم.") : count ? `جاهز لإضافة ${countLabel(count, "stock")}. الأسهم الموجودة عندك لن تتغير.` : "هالأسهم موجودة عندك بالفعل؛ ما راح نكررها.");
     openDialog($("#portfolio-import-dialog"));
   } catch {
     history.replaceState(null, "", "#investment");
@@ -3003,6 +3032,7 @@ function writeLockRecord(record) {
   lockRecord = record;
   try {
     if (record) localStorage.setItem(LOCK_KEY, JSON.stringify(record)); else localStorage.removeItem(LOCK_KEY);
+    native?.lockChanged(record);
     return true;
   } catch (error) { console.warn("Lock storage unavailable", error); return false; }
 }
@@ -3051,6 +3081,7 @@ function renderSecuritySettings() {
   const snapshot = readSnapshot();
   $("#restore-snapshot").hidden = !snapshot;
   if (snapshot) $("#restore-snapshot").textContent = `استرجاع نسخة ما قبل ${SNAPSHOT_LABELS[snapshot.reason] ?? "الاستيراد"}`;
+  native?.renderSettings();
 }
 
 /* ----- شاشة القفل ----- */
@@ -3148,13 +3179,13 @@ async function submitPin(event) {
   const next = $("#pin-new").value.trim();
   if (!PIN_PATTERN.test(normalizeDigits(next))) { error.textContent = "الرمز من 4 إلى 8 أرقام فقط."; return; }
   if (normalizeDigits(next) !== normalizeDigits($("#pin-confirm").value.trim())) { error.textContent = "الرمزان غير متطابقين."; return; }
-  if (!cryptoAvailable()) { error.textContent = "المتصفح لا يدعم القفل هنا."; return; }
+  if (!cryptoAvailable()) { error.textContent = IS_NATIVE ? "القفل ما يشتغل على هالجهاز." : "المتصفح لا يدعم القفل هنا."; return; }
   const changing = Boolean(lockRecord);
   const previousRecord = lockRecord;
   // التخزين المحظور: «تم تفعيل القفل» كانت تطلع والرمز ما ينحفظ، فيفتح التطبيق بدون قفل بعد إعادة التحميل (F11)
   if (!writeLockRecord(await createLockRecord(next))) {
     lockRecord = previousRecord;
-    error.textContent = "ما قدرت أحفظ الرمز على هذا الجهاز (التخزين محظور أو ممتلئ)، فالقفل ما راح يشتغل. افتح حوّش في Safari العادي وجرّب مرة ثانية.";
+    error.textContent = "ما قدرت أحفظ الرمز على هذا الجهاز (التخزين محظور أو ممتلئ)، فالقفل ما راح يشتغل. " + (IS_NATIVE ? "تأكد إن في مساحة فاضية على الجهاز وجرّب مرة ثانية." : "افتح حوّش في Safari العادي وجرّب مرة ثانية.");
     return;
   }
   closeDialog($("#pin-dialog")); renderSecuritySettings();
@@ -3192,11 +3223,22 @@ function setupSafetyEvents() {
   });
 }
 
-function exportData() {
+async function exportData() {
+  const before = { lastBackupAt: state.ui.lastBackupAt, backupSnoozedUntil: state.ui.backupSnoozedUntil };
   state.ui.lastBackupAt = new Date().toISOString();
   state.ui.backupSnoozedUntil = "";
   saveState(); renderBackupReminder();
   const data = JSON.stringify({ ...state, exportedAt: new Date().toISOString() }, null, 2);
+  if (native) {
+    // التطبيق: ملف مؤقت ثم شاشة المشاركة (ملفات، AirDrop). لو أُلغيت المشاركة ما نحسبها نسخة احتياطية.
+    const outcome = await native.shareBackup(data, `fils-backup-${todayISO()}.json`);
+    if (outcome === "shared") { toast("تم تجهيز النسخة الاحتياطية"); return; }
+    state.ui.lastBackupAt = before.lastBackupAt;
+    state.ui.backupSnoozedUntil = before.backupSnoozedUntil;
+    saveState(); renderBackupReminder();
+    toast(outcome === "cancelled" ? "ما انحفظت النسخة الاحتياطية" : "ما قدرت أفتح المشاركة. جرّب مرة ثانية");
+    return;
+  }
   const url = URL.createObjectURL(new Blob([data], { type: "application/json" }));
   const link = document.createElement("a");
   link.href = url; link.download = `fils-backup-${todayISO()}.json`; link.click();
@@ -3249,7 +3291,7 @@ async function importData(file) {
       state = previous;
       saveState();
       renderAll({ investmentInputs: true });
-      settingsError(`ما قدرت أحفظ النسخة المستوردة (${countLabel(next.transactions.length, "transaction")}) — مساحة المتصفح ما تكفي. رجّعت بياناتك السابقة كما هي.`);
+      settingsError(`ما قدرت أحفظ النسخة المستوردة (${countLabel(next.transactions.length, "transaction")}) — ${IS_NATIVE ? "مساحة الجهاز" : "مساحة المتصفح"} ما تكفي. رجّعت بياناتك السابقة كما هي.`);
       return;
     }
     closeDialog($("#settings-dialog"));
@@ -3628,6 +3670,7 @@ function bindEvents() {
 
 let deferredInstallPrompt = null;
 function setupInstall() {
+  if (IS_NATIVE) return; // التطبيق مثبّت أصلاً: ما فيه شي نثبّته
   const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   const card = $("#install-card");
   card.hidden = standalone || state.ui.installDismissed;
@@ -3659,12 +3702,20 @@ function initialize() {
   renderStorageWarning();
   if (!storageAvailable) toast("التخزين المحلي غير متاح؛ البيانات لن تستمر بعد إغلاق الصفحة.");
   navigator.storage?.persist?.().catch(() => {});
-  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  if (!IS_NATIVE && "serviceWorker" in navigator && location.protocol !== "file:") {
     navigator.serviceWorker.register("./sw.js").catch((error) => console.warn("Service worker registration failed", error));
   }
   // نسخة الكاش وقت فتح الصفحة (إذا الصفحة خاضعة لـ service worker): نعرف بعدين لو الملفات تحدّثت والصفحة لسا قديمة
   if (updateSupported() && navigator.serviceWorker.controller) readInstalledVersion().then((version) => { startupVersion = version; });
   confirmUpdateAfterReload();
+  startNative();
+}
+
+/* داخل التطبيق: نربط البصمة والتذكيرات ونعلم المستخدم لو رجّعنا بياناته من النسخة المحفوظة */
+function startNative() {
+  if (!native) return;
+  native.start().catch((error) => console.warn("Native start failed", error));
+  if (nativeRestored) toast("رجّعنا بياناتك من نسخة حفظها التطبيق على جهازك.");
 }
 
 initialize();
