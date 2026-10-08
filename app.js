@@ -2440,7 +2440,7 @@ async function scanLoanScreenshots(files) {
   let shownProgress = 2;
   setLoanAnalysisStatus({
     title: "جاري تجهيز قارئ الصور",
-    message: "تقدر تكمل استخدام فلس، وبنفتح لك شاشة المراجعة أول ما نخلص.",
+    message: "تقدر تكمل استخدام حوّش، وبنفتح لك شاشة المراجعة أول ما نخلص.",
     progress: shownProgress
   });
   try {
@@ -3102,7 +3102,7 @@ async function submitLock(event) {
 }
 async function forgotPin() {
   // F38: ضغطتين كانت تكفي لمسح كل شي؛ الحين لازم تنكتب «امسح» والتنبيه واضح لمن ما عنده ملف نسخة
-  if (!(await askConfirm("ما فيه طريقة لاسترجاع الرمز. نمسح كل بيانات فلس من هذا الجهاز (مع نسخة الرجوع التلقائية) ونفتح التطبيق بدون قفل. إذا ما عندك ملف نسخة احتياطية مصدّر، بياناتك تروح نهائياً. نكمل؟", { okLabel: "امسح وافتح", danger: true, phrase: "امسح" }))) return;
+  if (!(await askConfirm("ما فيه طريقة لاسترجاع الرمز. نمسح كل بيانات حوّش من هذا الجهاز (مع نسخة الرجوع التلقائية) ونفتح التطبيق بدون قفل. إذا ما عندك ملف نسخة احتياطية مصدّر، بياناتك تروح نهائياً. نكمل؟", { okLabel: "امسح وافتح", danger: true, phrase: "امسح" }))) return;
   writeLockRecord(null);
   // The automatic snapshot would otherwise restore everything without the PIN.
   try { localStorage.removeItem(SNAPSHOT_KEY); } catch { /* storage unavailable */ }
@@ -3154,7 +3154,7 @@ async function submitPin(event) {
   // التخزين المحظور: «تم تفعيل القفل» كانت تطلع والرمز ما ينحفظ، فيفتح التطبيق بدون قفل بعد إعادة التحميل (F11)
   if (!writeLockRecord(await createLockRecord(next))) {
     lockRecord = previousRecord;
-    error.textContent = "ما قدرت أحفظ الرمز على هذا الجهاز (التخزين محظور أو ممتلئ)، فالقفل ما راح يشتغل. افتح فلس في Safari العادي وجرّب مرة ثانية.";
+    error.textContent = "ما قدرت أحفظ الرمز على هذا الجهاز (التخزين محظور أو ممتلئ)، فالقفل ما راح يشتغل. افتح حوّش في Safari العادي وجرّب مرة ثانية.";
     return;
   }
   closeDialog($("#pin-dialog")); renderSecuritySettings();
@@ -3221,7 +3221,7 @@ async function importData(file) {
   try {
     const raw = JSON.parse(await file.text());
     if (Number.isInteger(raw?.version) && raw.version > 4) {
-      settingsError(`النسخة من إصدار أحدث من فلس (${raw.version}). حدّث التطبيق (أعد فتحه وهو متصل) وبعدها استوردها.`);
+      settingsError(`النسخة من إصدار أحدث من حوّش (${raw.version}). حدّث التطبيق (أعد فتحه وهو متصل) وبعدها استوردها.`);
       return;
     }
     if (![1, 2, 3, 4].includes(raw?.version)) throw new Error("Unsupported backup");
@@ -3635,7 +3635,7 @@ function setupInstall() {
   addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault(); deferredInstallPrompt = event;
     $("#install-button").hidden = false;
-    $("#install-copy").textContent = "اضغط تثبيت لإضافة فلس إلى الشاشة الرئيسية.";
+    $("#install-copy").textContent = "اضغط تثبيت لإضافة حوّش إلى الشاشة الرئيسية.";
   });
   $("#install-button").addEventListener("click", async () => {
     if (!deferredInstallPrompt) return;
