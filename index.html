@@ -379,15 +379,16 @@
       <button type="button" data-target="goals"><span>◎</span><strong>الأهداف</strong><small>تابع ادخارك وتقدمك</small></button>
     </div>
     <section class="bank-card" id="bank-card">
-      <div class="section-heading"><div><span class="eyebrow">إشعارات العمليات</span><h2>سجّل مصروفك من إشعارك</h2></div><span class="pill" id="bank-card-pending" hidden>0</span></div>
-      <p class="bank-card-copy" id="bank-card-copy"><span class="web-only">الآيفون يجمع إشعارات عملياتك أو رسائل SMS في ملف، وأنت تضغط «جلب الإشعارات» وتختاره. </span><span class="native-only">الصق رسالة العملية أو اختر ملفاً نصياً فيه الإشعارات، وراجع كل عملية قبل ما تنضاف. </span><span class="pill">مؤكد لإشعار البطاقة وخصم الحساب وتحويل ومض</span></p>
+      <div class="section-heading"><h2>سجّل مصروفك من إشعارك</h2><span class="pill" id="bank-card-pending" hidden>0</span></div>
+      <p class="bank-card-copy" id="bank-card-copy"><span class="web-only">الآيفون يجمع إشعارات عملياتك أو رسائل SMS في ملف، اضغط «جلب الإشعارات» واختره.</span><span class="native-only">الصق رسالة العملية أو اختر ملفاً نصياً فيه الإشعارات، وراجع كل عملية قبل ما تنضاف.</span></p>
+      <button type="button" class="primary bank-card-review" id="bank-card-review" data-action="review-pending" hidden>راجع العمليات الجديدة</button>
       <div class="bank-card-actions">
         <label class="primary file-button">جلب الإشعارات<input type="file" id="bank-file" accept=".txt,text/plain" hidden></label>
         <button type="button" class="secondary" data-action="paste-bank">لصق رسالة</button>
         <button type="button" class="secondary" data-action="new-transaction">＋ يدوي</button>
+        <button type="button" class="secondary bank-card-statement" data-action="import-statement">رفع كشف حساب الشهر</button>
       </div>
-      <button type="button" class="secondary bank-card-statement" data-action="import-statement">رفع كشف حساب الشهر</button>
-      <button type="button" class="primary bank-card-review" id="bank-card-review" data-action="review-pending" hidden>راجع العمليات الجديدة</button>
+      <p class="bank-card-note">مؤكد لإشعار البطاقة وخصم الحساب وتحويل ومض</p>
       <button type="button" class="link-button web-only" data-action="bank-automation-guide">طريقة الربط مع الآيفون (مرة وحدة)</button>
     </section>
   </dialog>
@@ -681,7 +682,8 @@
         <summary><strong>إشعارات التطبيق</strong><small>iOS 27 وأحدث</small></summary>
         <ol class="setup-steps">
           <li><strong>في تطبيق «الاختصارات»</strong><span>الأتمتة ← ＋ ← «إشعار» ← اختر التطبيق اللي توصلك منه إشعارات الدفع والخصم ← «تشغيل فوراً».</span></li>
-          <li><strong>أضف «إلحاق بملف نصي»</strong><span>النص: <code>التاريخ الحالي</code> ثم سطر جديد ثم <code>مدخل الاختصار</code>. اسم الملف: <code>fils-bank.txt</code>. ما تحتاج تختار حقول أو تنسيق.</span></li>
+          <li><strong>أضف «إلحاق بملف نصي» (Append to Text File) أربع مرات</strong><span>كل مرة: اسم الملف <code>fils-bank.txt</code> و«سطر جديد» شغال. الأولى نصها <code>التاريخ الحالي</code>.</span></li>
+          <li><strong>في الثلاث الباقية اختر أجزاء الإشعار بالترتيب</strong><span>اضغط على كلمة <code>Notification</code> داخل الإجراء واختر <code>Title</code> (العنوان) ثم <code>Subtitle</code> (العنوان الفرعي) ثم <code>Body</code> (النص). لو تركت «Notification» كاملة ينكتب الملف فاضي. اضغط الإجراء مطوّلاً ← Duplicate عشان تنسخه.</span></li>
           <li><strong>في حوّش</strong><span>اضغط «جلب الإشعارات» واختر fils-bank.txt من مجلد Shortcuts. المكرر ما ينضاف.</span></li>
         </ol>
       </details>
@@ -695,7 +697,7 @@
         </ol>
         <p class="hint">طريقة الرسائل ما انجرّبت على جهازك بعد. إذا ما اشتغلت، ارسل لنا لقطة من الأتمتة ونعدّلها.</p>
       </details>
-      <p class="notice warning"><strong>مؤكد من رسائلك:</strong> إشعار البطاقة (المبلغ، نوع البطاقة، التاجر) و«خصم من حساب… الرصيد» و«تحويل ومض… الرصيد المتوفر». <strong>تجريبي:</strong> باقي الصيغ (السحب، الراتب، الاسترداد) لين توصلنا رسالة حقيقية منها. أي إشعار ما ينفهم يفتح لك شاشة اللصق، ولا يضيف رقماً غير مؤكد.</p>
+      <p class="notice warning"><strong>مؤكد من رسائلك:</strong> إشعار البطاقة (المبلغ، نوع البطاقة، التاجر) و«خصم من حساب… الرصيد» و«تحويل ومض… الرصيد المتوفر» و«دفع… من حساب… الرصيد». <strong>تجريبي:</strong> باقي الصيغ (السحب، الراتب، الاسترداد) لين توصلنا رسالة حقيقية منها. أي إشعار ما ينفهم يفتح لك شاشة اللصق، ولا يضيف رقماً غير مؤكد.</p>
       <p class="hint">رموز التحقق والعمليات المرفوضة وتسديد البطاقة تُتجاهل. كل عملية جديدة تنتظر اعتمادك قبل ما تدخل الحسابات. لو إشعار ما انفهم، انسخه من «لصق رسالة» وأرسله لنا عشان نعلّم حوّش عليه.</p>
       <div class="dialog-actions single"><button type="button" class="primary close-dialog">تم</button></div>
     </form>

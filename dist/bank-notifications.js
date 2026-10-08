@@ -155,6 +155,10 @@ function findMerchant(text, type, fieldOrder) {
   const payTo = text.match(/\b(?:payment|paid|pay)\b[^\n]*?\bto\s+(.+)/i);
   const viaTo = payTo && cleanMerchant(payTo[1]);
   if (viaTo) return viaTo;
+  // «دفع خيرية 1.000 د.ك. من حساب 8002» (إشعار حقيقي 2026-10-08): الاسم بين «دفع» والمبلغ، مو «من حساب …».
+  const payLabel = text.match(new RegExp(String.raw`(?:^|[\s.])دفع\s+(?!مبلغ|بمبلغ|قيمة)([^\d\n]{2,40}?)\s*(?:${KWD}\s*${NUM}|${NUM}\s*${KWD})`));
+  const viaPayLabel = payLabel && cleanMerchant(payLabel[1]);
+  if (viaPayLabel) return viaPayLabel;
   const trailing = text.match(new RegExp(`${KWD}\\s*${NUM}\\s+([A-Za-z\u0621-\u064A][^\\n]*)`, "i")) ?? text.match(new RegExp(`${NUM}\\s*${KWD}\\s+([A-Za-z\u0621-\u064A][^\\n]*)`, "i"));
   const viaTrailing = trailing && cleanMerchant(trailing[2]);
   return viaTrailing || "تاجر غير محدد";
