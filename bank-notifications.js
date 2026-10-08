@@ -55,16 +55,19 @@ export const BOUBYAN_MERCHANT_FORMATS = [
 ];
 const WITHDRAWAL = ["atm", "cash withdrawal", "withdrawal", "سحب نقدي", "سحب من", "صراف"];
 const SALARY = ["salary", "payroll", "راتب", "الراتب"];
-const TRANSFER = ["transfer", "تحويل", "حوالة"];
+const TRANSFER = ["transfer", "تحويل", "حوالة", "ومض", "wamd"];
 const TRANSFER_IN = ["incoming", "received", "إلى حسابك", "الى حسابك", "to your account", "واردة", "وصلك", "تم استلام"];
 const TRANSFER_OUT = ["outgoing", "sent", "من حسابك", "from your account", "صادر", "تم تحويل مبلغ", "you transferred"];
+// ومض (2026-10-08، عينة حقيقية): «تحويل ومض 23.000 د.ك. من حساب 8002 إلى NAME. الرصيد المتوفر 11.508 د.ك.»
+// «من حساب <رقم>» بدون «ـك» = خرج من حسابك؛ ما نعتمدها إذا فيه علامة وارد صريحة.
+const FROM_ACCOUNT_NUMBER = /من\s+حساب\s*(?:رقم\s+)?[\d*xX•]{3,24}/;
 const DEPOSIT = ["credited", "deposit", "تم إضافة", "تم اضافة", "إيداع", "ايداع", "مبلغ وارد", "received"];
 const PURCHASE = ["purchase", "payment at", "paid", "spent", "pos", "knet", "debit", "debited", "charged", "شراء", "دفع", "خصم", "عملية"];
 
 const NUM = String.raw`(\d{1,3}(?:,\d{3})+(?:\.\d{1,3})?|\d+(?:\.\d{1,3})?)`;
 const KWD = String.raw`(?:KWD|KD|د\.ك\.?|دينار(?:\s+كويتي)?)`;
 const FOREIGN = String.raw`(USD|EUR|GBP|AED|SAR|BHD|QAR|OMR|EGP|INR|TRY|JPY|\$|€|£)`;
-const BALANCE_RE = new RegExp(String.raw`(?:الرصيد\s+المتاح|الرصيد\s+المتبقي|الرصيد\s+الحالي|الرصيد|available\s+balance|avail\.?\s*bal(?:ance)?\.?|balance)\s*[:\-]?\s*(?:${KWD})?\s*${NUM}(?:\s*${KWD})?`, "i");
+const BALANCE_RE = new RegExp(String.raw`(?:الرصيد\s+المتاح|الرصيد\s+المتوفر|الرصيد\s+المتبقي|الرصيد\s+الحالي|الرصيد|available\s+balance|avail\.?\s*bal(?:ance)?\.?|balance)\s*[:\-]?\s*(?:${KWD})?\s*${NUM}(?:\s*${KWD})?`, "i");
 
 const MONTHS = {
   "يناير": 1, "كانون الثاني": 1, "فبراير": 2, "شباط": 2, "مارس": 3, "آذار": 3, "ابريل": 4, "أبريل": 4, "نيسان": 4, "مايو": 5, "أيار": 5,
@@ -137,7 +140,8 @@ function findMerchant(text, type, fieldOrder) {
   }
   if (type === "transfer_out") {
     const to = text.match(/(?:\bto\b|إلى|الى)\s*[:\-]?\s+(.+)/i);
-    return `تحويل${to ? ` إلى ${cleanMerchant(to[1])}` : ""}`.slice(0, 80);
+    const label = /ومض|wamd/i.test(text) ? "تحويل ومض" : "تحويل";
+    return `${label}${to ? ` إلى ${cleanMerchant(to[1])}` : ""}`.slice(0, 80);
   }
   if (type === "salary") return "راتب";
   if (type === "deposit" || type === "transfer_in") {
@@ -173,7 +177,8 @@ export function parseBankNotification(raw, { todayISO, fieldOrder = DEFAULT_FIEL
   else   if (has(lower, REFUND)) type = "refund";
   else if (has(lower, WITHDRAWAL)) type = "withdrawal";
   else if (has(lower, SALARY)) type = "salary";
-  else if (has(lower, TRANSFER)) type = has(lower, TRANSFER_IN) && !has(lower, TRANSFER_OUT) ? "transfer_in" : has(lower, TRANSFER_OUT) ? "transfer_out" : "unknown";
+  else if (has(lower, TRANSFER)) type = has(lower, TRANSFER_IN) && !has(lower, TRANSFER_OUT) ? "transfer_in"
+    : has(lower, TRANSFER_OUT) || (!has(lower, TRANSFER_IN) && FROM_ACCOUNT_NUMBER.test(text)) ? "transfer_out" : "unknown";
   else if (has(lower, DEPOSIT)) type = "deposit";
   else if (has(lower, PURCHASE)) type = "purchase";
   if (type === "unknown") return { ...base, needsManual: true, reason: "unrecognized" };
