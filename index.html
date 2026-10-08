@@ -35,7 +35,7 @@
       <p id="backup-reminder-text"></p>
       <div class="row"><button type="button" class="small primary" id="backup-export">تصدير نسخة الحين</button><button type="button" class="small ghost" id="backup-snooze">بعد 3 أيام</button></div>
     </aside>
-    <aside class="install-card" id="install-card" hidden>
+    <aside class="install-card web-only" id="install-card" hidden>
       <div><strong>ثبّت حوّش على آيفونك</strong><p id="install-copy">افتح قائمة المشاركة في Safari ثم اختر «إضافة إلى الشاشة الرئيسية».</p></div>
       <div class="row"><button class="small primary" id="install-button" hidden>تثبيت</button><button class="small ghost" id="dismiss-install">لاحقاً</button></div>
     </aside>
@@ -47,13 +47,13 @@
           <strong class="hero-number" id="budget-remaining">0.000 د.ك</strong>
           <span class="muted" id="budget-caption">بعد حجز التزاماتك واحتياطي الأمان</span>
         </div>
-        <div class="hero-coin" aria-hidden="true">ف</div>
+        <div class="hero-coin" aria-hidden="true">ح</div>
       </div>
 
       <div class="nudges" id="nudges" hidden></div>
       <section class="bank-card" id="bank-card">
-        <div class="section-heading"><div><span class="eyebrow">إشعارات بوبيان</span><h2>سجّل مصروفك من البنك</h2></div><span class="pill" id="bank-card-pending" hidden>0</span></div>
-        <p class="bank-card-copy" id="bank-card-copy">الآيفون يجمع إشعارات بوبيان في ملف، وأنت تضغط «جلب الإشعارات» وتختاره. <span class="pill">مؤكد لإشعار البطاقة وخصم الحساب</span></p>
+        <div class="section-heading"><div><span class="eyebrow">إشعارات البنك</span><h2>سجّل مصروفك من البنك</h2></div><span class="pill" id="bank-card-pending" hidden>0</span></div>
+        <p class="bank-card-copy" id="bank-card-copy"><span class="web-only">الآيفون يجمع إشعارات البنك في ملف، وأنت تضغط «جلب الإشعارات» وتختاره. </span><span class="native-only">الصق رسالة البنك أو اختر ملفاً نصياً فيه الإشعارات، وراجع كل عملية قبل ما تنضاف. </span><span class="pill">مؤكد لإشعار البطاقة وخصم الحساب</span></p>
         <div class="bank-card-actions">
           <label class="primary file-button">جلب الإشعارات<input type="file" id="bank-file" accept=".txt,text/plain" hidden></label>
           <button type="button" class="secondary" data-action="paste-bank">لصق رسالة</button>
@@ -61,7 +61,7 @@
         </div>
         <button type="button" class="secondary bank-card-statement" data-action="import-statement">رفع كشف حساب الشهر</button>
         <button type="button" class="primary bank-card-review" id="bank-card-review" data-action="review-pending" hidden>راجع العمليات الجديدة</button>
-        <button type="button" class="link-button" data-action="bank-automation-guide">طريقة الربط مع الآيفون (مرة وحدة)</button>
+        <button type="button" class="link-button web-only" data-action="bank-automation-guide">طريقة الربط مع الآيفون (مرة وحدة)</button>
       </section>
       <section class="daily-budget-card" id="daily-budget-card">
         <div class="daily-budget-head">
@@ -201,7 +201,7 @@
     </section>
 
     <section class="view" id="advisor-view" data-view="advisor">
-      <div class="page-title"><div><span class="eyebrow">خطة من بياناتك</span><h1>المستشار</h1></div><span class="pill">ديون · التزامات · استثمار</span></div>
+      <div class="page-title"><div><span class="eyebrow">حسابات من بياناتك</span><h1>خطة الشهر</h1></div><span class="pill">ديون · التزامات · استثمار</span></div>
       <section class="advisor-hero">
         <span class="eyebrow">هدفك المالي</span>
         <h2 id="advisor-headline">رتّب التزاماتك، خفّض ديونك، ثم وسّع استثمارك</h2>
@@ -234,10 +234,11 @@
         <ol id="advisor-actions" class="advisor-actions"></ol>
         <p class="legal-note">هذه خطة توزيع مبدئية حسب البيانات المدخلة وليست توصية استثمارية مضمونة. افحص رسوم السداد المبكر، وسجّل معدلات الديون الفعلية قبل ترتيبها. لا تستثمر مبلغاً تحتاجه قريباً.</p>
       </section>
-      <details class="organized-section" id="accountant-details"><summary><span><strong>المحاسب الآلي</strong><small>اسأل عن فلوسك وخطتك</small></span><span class="disclosure-arrow" aria-hidden="true">⌄</span></summary><div class="organized-content">
+      <details class="organized-section" id="accountant-details"><summary><span><strong>حاسبة فلوسك</strong><small>احسب من بياناتك</small></span><span class="disclosure-arrow" aria-hidden="true">⌄</span></summary><div class="organized-content">
       <section class="panel accountant-panel">
-        <div class="section-heading"><div><span class="eyebrow">حسابات من بياناتك</span><h2>المحاسب الآلي</h2></div><span class="pill">من بياناتك</span></div>
+        <div class="section-heading"><div><span class="eyebrow">حسابات من بياناتك</span><h2>حاسبة فلوسك</h2></div><span class="pill">من بياناتك</span></div>
         <p class="hint">الحسابات تتم بمعادلات ثابتة، وأي توقع يظهر لك بوضوح على أنه تقديري.</p>
+        <p class="legal-note">هذي حسابات من أرقامك، مو استشارة مالية مرخّصة ولا توصية بشراء أو بيع أي شي.</p>
         <div class="question-chips" id="accountant-prompts">
           <button type="button">كم أقدر أصرف اليوم؟</button>
           <button type="button">شنو عليّ هذا الأسبوع؟</button>
@@ -294,6 +295,7 @@
               <div><span>التكلفة بعد التبريد</span><strong id="cooling-new-cost">—</strong></div>
             </div>
             <p class="hint" id="cooling-message" role="status"></p>
+            <p class="legal-note">محاكاة حسابية فقط، وليست توصية بالشراء. زيادة الكمية تزيد المبلغ المعرّض للخسارة؛ النتيجة لا تغيّر محفظتك أو تنفذ صفقة.</p>
           </form>
         </div>
       </details>
@@ -323,7 +325,7 @@
     </section>
 
     <section class="view" id="checkup-view" data-view="checkup">
-      <div class="page-title"><div><span class="eyebrow">مراجعة مستشار مالي</span><h1>الفحص المالي</h1></div><span class="pill">تقييم · زكاة · تكلفة القرض</span></div>
+      <div class="page-title"><div><span class="eyebrow">مراجعة من بياناتك</span><h1>الفحص المالي</h1></div><span class="pill">تقييم · زكاة · تكلفة القرض</span></div>
       <div id="checkup-root"></div>
     </section>
 
@@ -334,7 +336,7 @@
       <section class="panel behavior-panel" id="behavior-panel">
         <div class="section-heading"><div><span class="eyebrow">قراءة من معاملاتك الفعلية</span><h2>سلوك صرفك · آخر 12 شهر</h2></div><button type="button" class="secondary small" data-action="import-statement">＋ كشف حساب</button></div>
         <p class="hint">نحلل المصروفات المعتمدة ونوضح الأنماط بالأرقام؛ ما نخمن صفات شخصية من مشترياتك.</p>
-        <div id="behavior-empty" class="behavior-empty"><strong>ما عندنا كشف 12 شهر للحين</strong><span>نزّل كشف معاملاتك من بوبيان بصيغة PDF أو CSV أو OFX، وبعدها اختره هنا. الملف يُقرأ على جهازك.</span><button type="button" class="primary" data-action="import-statement">اختيار كشف حساب</button></div>
+        <div id="behavior-empty" class="behavior-empty"><strong>ما عندنا كشف 12 شهر للحين</strong><span>نزّل كشف معاملاتك من البنك بصيغة PDF أو CSV أو OFX، وبعدها اختره هنا. الملف يُقرأ على جهازك.</span><button type="button" class="primary" data-action="import-statement">اختيار كشف حساب</button></div>
         <div id="behavior-content" hidden>
           <div class="metric-grid behavior-metrics">
             <article class="metric featured"><span>إجمالي المصروفات المحللة</span><strong id="behavior-total">0.000 د.ك</strong></article>
@@ -381,9 +383,9 @@
     <div class="dialog-heading"><h2>المزيد</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
     <div class="more-menu">
       <button type="button" data-action="open-onboarding"><span>✦</span><strong>رتّب لي كل شي</strong><small>3 أسئلة وأضبط لك الخطة</small></button>
-      <button type="button" data-target="advisor"><span>❖</span><strong>المستشار</strong><small>خطة الراتب واسأل المحاسب</small></button>
+      <button type="button" data-target="advisor"><span>❖</span><strong>خطة الشهر</strong><small>خطة الراتب وحاسبة فلوسك</small></button>
       <button type="button" data-target="investment"><span>↗</span><strong>الاستثمار</strong><small>محفظة الأسهم</small></button>
-      <button type="button" data-target="gold"><span>◈</span><strong>محفظة الذهب</strong><small>مشترياتك وسعر اليوم ومتى تشتري</small></button>
+      <button type="button" data-target="gold"><span>◈</span><strong>محفظة الذهب</strong><small>مشترياتك وسعر اليوم وسعرك المستهدف</small></button>
       <button type="button" data-target="spending"><span>◔</span><strong>المصروف والميزانية</strong><small>الفعلي مقابل الميزانية</small></button>
       <button type="button" data-target="checkup"><span>✚</span><strong>الفحص المالي</strong><small>تقييم وزكاة وتكلفة القرض</small></button>
       <button type="button" data-target="goals"><span>◎</span><strong>الأهداف</strong><small>تابع ادخارك وتقدمك</small></button>
@@ -392,7 +394,7 @@
     <div class="more-tools">
       <button type="button" class="secondary" data-action="import-statement">رفع كشف حساب الشهر</button>
       <button type="button" class="secondary" data-action="import-bank">لصق رسالة بنك</button>
-      <button type="button" class="secondary" data-action="bank-automation-guide">ربط إشعارات بوبيان</button>
+      <button type="button" class="secondary web-only" data-action="bank-automation-guide">ربط إشعارات البنك</button>
     </div>
   </dialog>
 
@@ -423,7 +425,7 @@
     <form id="bank-form" novalidate>
       <div class="dialog-heading"><h2>لصق تنبيه البنك</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
       <div class="notice">الصق إشعاراً واحداً أو عدة إشعارات (افصل بينها بسطر فاضي). يفهم حوّش الشراء والسحب والتحويل والراتب والاسترداد، ويتجاهل رمز التحقق والعمليات المرفوضة، وتراجع كل شيء قبل الاعتماد.</div>
-      <div class="notice warning" id="bank-browser-note" hidden>أنت فاتح حوّش من Safari، مو من أيقونة حوّش. اللي تضيفه هنا ما يوصل بياناتك اللي بالأيقونة (التخزين منفصل). افتح أيقونة حوّش من الشاشة الرئيسية وجرب من هناك.</div>
+      <div class="notice warning web-only" id="bank-browser-note" hidden>أنت فاتح حوّش من Safari، مو من أيقونة حوّش. اللي تضيفه هنا ما يوصل بياناتك اللي بالأيقونة (التخزين منفصل). افتح أيقونة حوّش من الشاشة الرئيسية وجرب من هناك.</div>
       <button type="button" class="secondary" id="bank-paste-clipboard">لصق من الحافظة</button>
       <label class="field"><span>نص الرسالة</span><textarea id="bank-text" rows="4" placeholder="Purchase of KWD 12.450 at TALABAT"></textarea></label>
       <div class="bank-preview" id="bank-preview" aria-live="polite"></div>
@@ -435,10 +437,10 @@
 
   <dialog id="statement-import-dialog" class="wide-dialog">
     <form id="statement-import-form" novalidate>
-      <div class="dialog-heading"><div><h2>رفع كشف حساب</h2><span class="eyebrow">بوبيان · شهر أو أكثر · مراجعة قبل الإضافة</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
-      <div class="notice privacy-notice">نزّل كشف المعاملات من بوبيان، ثم اختر الملف هنا. «حوّش» ما يطلب بيانات دخول البنك، ويقرأ الملف محليًا على جهازك. لتحليل مشتريات الفيزا بالتفصيل ارفع كشف البطاقة أيضًا؛ تسديد البطاقة من الحساب يُستبعد حتى ما ينحسب الشراء مرتين.</div>
+      <div class="dialog-heading"><div><h2>رفع كشف حساب</h2><span class="eyebrow">كشف البنك · شهر أو أكثر · مراجعة قبل الإضافة</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="notice privacy-notice">نزّل كشف المعاملات من البنك، ثم اختر الملف هنا. «حوّش» ما يطلب بيانات دخول البنك، ويقرأ الملف محليًا على جهازك. لتحليل مشتريات الفيزا بالتفصيل ارفع كشف البطاقة أيضًا؛ تسديد البطاقة من الحساب يُستبعد حتى ما ينحسب الشراء مرتين.</div>
       <label class="field"><span>ملف كشف الحساب</span><input id="statement-file" type="file" accept=".pdf,application/pdf,.csv,.tsv,.ofx,.qfx,.txt,text/csv,text/tab-separated-values,application/x-ofx,application/vnd.intu.qfx"></label>
-      <p class="hint">الصيغ المدعومة PDF وCSV وTSV وOFX/QFX. دعم PDF حالياً لكشف بوبيان النصي بالعربي؛ الصور الممسوحة والملفات المحمية غير مدعومة. نضيف المصروفات فقط؛ الإيداعات والتحويلات بين الحسابات تستبعد من تحليل الصرف.</p>
+      <p class="hint">الصيغ المدعومة PDF وCSV وTSV وOFX/QFX. دعم PDF حالياً لكشف حساب البنك النصي بالعربي؛ الصور الممسوحة والملفات المحمية غير مدعومة. نضيف المصروفات فقط؛ الإيداعات والتحويلات بين الحسابات تستبعد من تحليل الصرف.</p>
       <p class="hint" id="statement-import-progress" role="status" aria-live="polite" hidden></p>
       <p class="form-error" id="statement-import-error" role="alert"></p>
       <section id="statement-import-preview" class="statement-import-preview" hidden>
@@ -489,7 +491,7 @@
       <input type="hidden" id="loan-id">
       <div class="form-grid">
         <label class="field"><span>اسم القرض أو القسط</span><input id="loan-name" required maxlength="60" placeholder="مثال: التمويل الشخصي"></label>
-        <label class="field"><span>البنك / الجهة</span><input id="loan-lender" maxlength="60" placeholder="مثال: بنك بوبيان"></label>
+        <label class="field"><span>البنك / الجهة</span><input id="loan-lender" maxlength="60" placeholder="مثال: اسم البنك"></label>
         <label class="field"><span>نوع القرض</span><select id="loan-type"></select></label>
         <label class="field"><span>الحالة</span><select id="loan-status"><option value="active">نشط</option><option value="completed">مكتمل</option><option value="overdue">متأخر</option><option value="stopped">متوقف</option></select></label>
         <label class="field"><span>المبلغ الأصلي</span><div class="money-field"><input id="loan-original" required inputmode="decimal"><b>د.ك</b></div></label>
@@ -523,7 +525,7 @@
   <dialog id="loan-scan-dialog" class="wide-dialog">
     <form id="loan-scan-form">
       <div class="dialog-heading"><div><h2>استيراد القروض من صور</h2><span class="eyebrow">اختر الصور واترك الباقي على حوّش</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
-      <div class="notice privacy-notice">🔒 الصور تُقرأ داخل متصفحك على جهازك ولا تُحفظ في حوّش ولا تُرسل لأي خادم. قارئ النص ولغاته جزء من التطبيق، فيشتغل بدون إنترنت.</div>
+      <div class="notice privacy-notice">🔒 الصور تُقرأ داخل <span class="web-only">متصفحك</span><span class="native-only">التطبيق</span> على جهازك ولا تُحفظ في حوّش ولا تُرسل لأي خادم. قارئ النص ولغاته جزء من التطبيق، فيشتغل بدون إنترنت.</div>
       <label class="upload-zone" id="loan-upload-zone">
         <span class="upload-icon">▣</span>
         <strong>اختر سكرين شوت القروض والأقساط</strong>
@@ -662,27 +664,30 @@
       <label class="field"><span>قيمة الاستثمارات الحالية</span><div class="money-field"><input id="settings-invested" inputmode="decimal"><b>د.ك</b></div></label>
       <label class="field"><span>قيمة الأصول الأخرى</span><div class="money-field"><input id="settings-assets" inputmode="decimal"><b>د.ك</b></div></label>
       <p class="form-error" id="settings-error" role="alert"></p>
-      <section class="data-actions" id="update-actions"><h3>النسخة والتحديث</h3><p>اضغط الزر وحوّش يشوف إذا في نسخة أحدث وينزّلها. بياناتك على الجهاز ما تتغير.</p><button type="button" class="secondary update-button" id="update-app">تحديث التطبيق</button><p class="hint update-status" id="update-status" role="status" aria-live="polite">جاري قراءة النسخة…</p></section>
-      <section class="data-actions"><h3>بياناتك</h3><p>تُحفظ على هذا الجهاز فقط. صدّر نسخة احتياطية قبل مسح Safari أو تغيير الجهاز. <a href="privacy.html" target="_blank" rel="noopener">اقرأ سياسة الخصوصية</a>.</p><div class="row wrap"><button type="button" class="secondary" id="export-data">تصدير نسخة</button><label class="secondary file-button">استيراد نسخة<input type="file" id="import-data" accept="application/json" hidden></label><button type="button" class="danger" id="reset-data">مسح جميع البيانات</button><button type="button" class="danger" id="reset-data-hard">مسح نهائي بدون نسخة رجوع</button></div><p class="hint">«مسح جميع البيانات» يحفظ نسخة رجوع واحدة على الجهاز. «مسح نهائي» يمسحها هي كمان، فما يبقى شي يُسترجع.</p></section>
-      <section class="data-actions" id="security-actions"><h3>الحماية</h3><p><strong id="lock-status">القفل غير مفعّل</strong><br>القفل يمنع فتح التطبيق بدون الرمز، لكنه لا يشفّر البيانات المخزنة في المتصفح. ما فيه استرجاع للرمز لو نسيته.</p><div class="row wrap"><button type="button" class="secondary" id="lock-setup">تفعيل القفل</button><button type="button" class="secondary" id="lock-now" hidden>قفل الحين</button><button type="button" class="danger" id="lock-disable" hidden>إيقاف القفل</button><button type="button" class="secondary" id="restore-snapshot" hidden>استرجاع النسخة التلقائية</button></div></section>
-      <section class="data-actions"><h3>إشعارات بوبيان</h3><p>خلّ الآيفون يجمع إشعارات بوبيان في ملف يقرأه حوّش.</p><button type="button" class="secondary" data-action="bank-automation-guide">عرض خطوات الربط</button>
+      <section class="data-actions web-only" id="update-actions"><h3>النسخة والتحديث</h3><p>اضغط الزر وحوّش يشوف إذا في نسخة أحدث وينزّلها. بياناتك على الجهاز ما تتغير.</p><button type="button" class="secondary update-button" id="update-app">تحديث التطبيق</button><p class="hint update-status" id="update-status" role="status" aria-live="polite">جاري قراءة النسخة…</p></section>
+      <section class="data-actions"><h3>بياناتك</h3><p>تُحفظ على هذا الجهاز فقط. صدّر نسخة احتياطية قبل <span class="web-only">مسح Safari</span><span class="native-only">حذف التطبيق</span> أو تغيير الجهاز. <a href="privacy.html" target="_blank" rel="noopener">اقرأ سياسة الخصوصية</a>.</p><div class="row wrap"><button type="button" class="secondary" id="export-data">تصدير نسخة</button><label class="secondary file-button">استيراد نسخة<input type="file" id="import-data" accept="application/json" hidden></label><button type="button" class="danger" id="reset-data">مسح جميع البيانات</button><button type="button" class="danger" id="reset-data-hard">مسح نهائي بدون نسخة رجوع</button></div><p class="hint">«مسح جميع البيانات» يحفظ نسخة رجوع واحدة على الجهاز. «مسح نهائي» يمسحها هي كمان، فما يبقى شي يُسترجع.</p></section>
+      <section class="data-actions" id="security-actions"><h3>الحماية</h3><p><strong id="lock-status">القفل غير مفعّل</strong><br>القفل يمنع فتح التطبيق بدون الرمز، لكنه لا يشفّر البيانات المخزنة <span class="web-only">في المتصفح</span><span class="native-only">على الجهاز</span>. ما فيه استرجاع للرمز لو نسيته.</p><div class="row wrap"><button type="button" class="secondary" id="lock-setup">تفعيل القفل</button><button type="button" class="secondary" id="lock-now" hidden>قفل الحين</button><button type="button" class="danger" id="lock-disable" hidden>إيقاف القفل</button><button type="button" class="secondary" id="restore-snapshot" hidden>استرجاع النسخة التلقائية</button></div></section>
+      <section class="data-actions native-only" id="native-security"><h3 id="biometric-title">فتح التطبيق بـ Face ID</h3><label class="switch-row"><span id="biometric-label">استخدم Face ID مع الرمز</span><input type="checkbox" role="switch" id="biometric-toggle"></label><p class="hint" id="biometric-hint" role="status"></p></section>
+      <section class="data-actions native-only" id="native-reminders"><h3>التذكيرات</h3><label class="switch-row"><span>ذكّرني بالأقساط والالتزامات والمعاش</span><input type="checkbox" role="switch" id="reminders-toggle"></label><p class="hint" id="reminders-hint" role="status"></p><button type="button" class="secondary small" id="open-ios-settings" hidden>فتح إعدادات الآيفون</button></section>
+      <section class="data-actions web-only" id="bank-shortcut-settings"><h3>إشعارات البنك</h3><p>خلّ الآيفون يجمع إشعارات البنك في ملف يقرأه حوّش.</p><button type="button" class="secondary web-only" data-action="bank-automation-guide">عرض خطوات الربط</button>
         <div class="bank-fields"><p><strong>حقول الإشعار في الاختصار:</strong> <span id="bank-field-summary"></span><br><small>حوّش يفهم الإشعار بأي ترتيب. غيّر هنا فقط إذا اخترت الحقول بنفسك في الاختصار.</small></p>
           <div class="bank-field-row"><label class="field"><span>الأول</span><select data-bank-field="0"></select></label><label class="field"><span>الثاني</span><select data-bank-field="1"></select></label><label class="field"><span>الثالث</span><select data-bank-field="2"></select></label></div>
           <button type="button" class="ghost small" id="bank-field-reset">رجوع للافتراضي</button></div></section>
+      <p class="hint" id="copyright-line">© 2026 حوّش. جميع الحقوق محفوظة.</p>
       <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">حفظ</button></div>
     </form>
   </dialog>
 
-  <dialog id="bank-automation-dialog" class="wide-dialog">
+  <dialog id="bank-automation-dialog" class="wide-dialog web-only">
     <form method="dialog">
-      <div class="dialog-heading"><div><h2>ربط إشعارات بوبيان بالآيفون</h2><span class="eyebrow">إعداد مرة وحدة · دقيقتين</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="dialog-heading"><div><h2>ربط إشعارات البنك بالآيفون</h2><span class="eyebrow">إعداد مرة وحدة · دقيقتين</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
       <div class="notice privacy-notice"><p>🔒 حوّش ما يدخل حسابك البنكي. الآيفون يحفظ نص الإشعار في ملف على جهازك، وحوّش يقرأه لما تطلب.</p></div>
       <ol class="setup-steps">
-        <li><strong>في تطبيق «الاختصارات»</strong><span>الأتمتة ← ＋ ← «إشعار» ← اختر بوبيان ← «تشغيل فوراً».</span></li>
+        <li><strong>في تطبيق «الاختصارات»</strong><span>الأتمتة ← ＋ ← «إشعار» ← اختر تطبيق البنك ← «تشغيل فوراً».</span></li>
         <li><strong>أضف «إلحاق بملف نصي»</strong><span>النص: <code>التاريخ الحالي</code> ثم سطر جديد ثم <code>مدخل الاختصار</code>. اسم الملف: <code>fils-bank.txt</code>. ما تحتاج تختار حقول أو تنسيق.</span></li>
         <li><strong>في حوّش</strong><span>اضغط «جلب الإشعارات» واختر fils-bank.txt من مجلد Shortcuts. المكرر ما ينضاف.</span></li>
       </ol>
-      <p class="hint">جهازك أقدم من iOS 27؟ اختر «رسالة» بدل «إشعار» وحدد مرسل بوبيان.</p>
+      <p class="hint">جهازك أقدم من iOS 27؟ اختر «رسالة» بدل «إشعار» وحدد مرسل البنك.</p>
       <p class="notice warning"><strong>مؤكد من رسائلك:</strong> إشعار البطاقة (المبلغ، نوع البطاقة، التاجر) و«خصم من حساب… الرصيد». <strong>تجريبي:</strong> باقي الصيغ (السحب، التحويل، الراتب، الاسترداد) لين توصلنا رسالة حقيقية منها. أي إشعار ما ينفهم يفتح لك شاشة اللصق، ولا يضيف رقماً غير مؤكد.</p>
       <p class="hint">رموز التحقق والعمليات المرفوضة وتسديد البطاقة تُتجاهل. كل عملية جديدة تنتظر اعتمادك قبل ما تدخل الحسابات. لو إشعار ما انفهم، انسخه من «لصق رسالة» وأرسله لنا عشان نعلّم حوّش عليه.</p>
       <div class="dialog-actions single"><button type="button" class="primary close-dialog">تم</button></div>
@@ -696,6 +701,7 @@
       <label class="field"><span>اكتب الرمز</span><input id="lock-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8"></label>
       <p class="form-error" id="lock-error" role="alert"></p>
       <button type="submit" class="primary" id="lock-submit">فتح</button>
+      <button type="button" class="secondary" id="lock-biometric" hidden>فتح بـ Face ID</button>
       <button type="button" class="ghost small" id="lock-forgot">نسيت الرمز</button>
     </form>
   </div>

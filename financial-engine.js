@@ -403,7 +403,7 @@ export function livingBaseline(transactions = [], todayISO, { months = 3, budget
   return { amountFils: 0, source: "missing", months: observed };
 }
 
-/* رقم واحد للفائض/العجز الشهري يُستخدم في المستشار والفحص وخطة الراتب والأهداف:
+/* رقم واحد للفائض/العجز الشهري يُستخدم في صفحة الخطة والفحص وخطة الراتب والأهداف:
    الدخل − الأقساط − الالتزامات − متوسط المعيشة. */
 export function monthlySurplus({ incomeFils = 0, debtPaymentsFils = 0, commitmentsFils = 0, livingFils = 0 } = {}) {
   const safe = (value) => validFils(value) ? value : 0;
