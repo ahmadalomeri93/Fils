@@ -10,7 +10,7 @@ const STOCK_ROWS = `
 106|KIB|الدولي
 107|BURG|برقان
 108|KFH|بيتك
-109|BOUBYAN|بنك بوبيان
+109|BOUBYAN|بوبيان
 201|KINV|كويتية
 202|FACIL|تسهيلات
 203|IFA|ايفا
@@ -124,7 +124,7 @@ const STOCK_ROWS = `
 812|BKIKWT|ب ك تأمين
 813|GFH|جي اف اتش
 817|INOVEST|إنوفست
-821|WARBABANK|بنك وربة
+821|WARBABANK|وربة
 822|STC|أس تي سي
 823|MEZZAN|ميزان
 824|INTEGRATED|المتكاملة

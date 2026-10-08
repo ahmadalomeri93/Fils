@@ -335,7 +335,7 @@ main { width: min(100%, 1040px); margin: 0 auto; padding: 22px 18px calc(110px +
   bottom: max(8px, env(safe-area-inset-bottom));
   left: max(10px, env(safe-area-inset-left));
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   max-width: 720px;
   margin: auto;
   padding: 7px;
@@ -497,7 +497,20 @@ dialog form { display: grid; gap: 14px; padding: 21px; }
 .setup-steps { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; counter-reset: setup; }
 .setup-steps li { position: relative; display: grid; gap: 4px; padding: 14px 54px 14px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); counter-increment: setup; }
 .setup-steps li::before { content: counter(setup); position: absolute; right: 13px; top: 13px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; color: white; background: var(--teal-800); font-weight: 900; }
-.setup-steps span { color: var(--muted); font-size: .82rem; line-height: 1.55; direction: ltr; text-align: right; }
+.setup-steps span { color: var(--muted); font-size: .82rem; line-height: 1.55; direction: rtl; text-align: start; }
+.setup-steps code { direction: ltr; unicode-bidi: isolate; letter-spacing: 0; overflow-wrap: anywhere; }
+/* دليل الربط: خياران قابلان للطي (إشعارات التطبيق / رسائل SMS) */
+.route-section { margin: 12px 0; border: 1px solid var(--line); border-radius: 16px; background: var(--card); }
+.route-section > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 12px 16px; cursor: pointer; list-style: none; }
+.route-section > summary::-webkit-details-marker { display: none; }
+.route-section > summary::after { content: "⌄"; color: var(--muted); font-size: 1.1rem; transition: transform .15s; }
+.route-section[open] > summary::after { transform: rotate(180deg); }
+.route-section > summary strong { margin-inline-end: auto; color: var(--text-strong); font-size: .95rem; }
+.route-section > summary small { color: var(--muted); font-size: .78rem; }
+.route-section > summary:focus-visible { outline: 3px solid var(--teal-700); outline-offset: -4px; border-radius: 16px; }
+.route-section[open] > summary { border-bottom: 1px solid var(--line); }
+.route-section .setup-steps { padding: 12px; }
+.route-section > .hint { margin: 0 14px 14px; }
 .link-copy-card { display: grid; gap: 9px; padding: 15px; border-radius: 17px; background: var(--c-soft); }
 .link-copy-card > span { color: var(--muted); font-size: .8rem; font-weight: 750; }
 .link-copy-card code { overflow-wrap: anywhere; padding: 10px; border: 1px solid rgba(0,91,80,.14); border-radius: 11px; color: var(--text-strong); background: var(--card); direction: ltr; text-align: left; font-size: .76rem; }
@@ -729,7 +742,6 @@ body.is-locked > :not(.lock-screen):not(dialog) { display: none !important; }
 @media (max-width: 360px) { .bank-card-actions { grid-template-columns: 1fr 1fr; } .bank-card-actions > :first-child { grid-column: 1 / -1; } }
 
 /* Gold portfolio */
-.gold-link { width: 100%; margin: 0 0 14px; min-height: 48px; }
 .gold-karats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 8px 0; }
 .gold-karats > div { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 16px; }
 .gold-karats span { color: var(--muted); font-size: .85rem; }
@@ -938,3 +950,24 @@ dialog.native-doc-dialog { width: min(calc(100% - 16px), 720px); max-height: 92v
 .native-doc-dialog .native-doc-body { padding: 4px 8px 0; }
 .native-doc-dialog .page-title { padding: 10px 12px 0; }
 .native-doc-dialog .panel { box-shadow: none; }
+
+/* خانة الاستثمار (أسهم وذهب) بالشريط السفلي + نقطة «للمراجعة» على «المزيد» + تبويب أسهم/ذهب */
+.bottom-nav button { position: relative; }
+.nav-badge { position: absolute; top: 2px; inset-inline-start: calc(50% + 2px); direction: ltr; unicode-bidi: isolate; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; color: #fff; background: #b42318; font-size: .66rem; font-weight: 800; line-height: 18px; text-align: center; }
+.nav-badge[hidden] { display: none; }
+.invest-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 0 14px; padding: 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
+.invest-tabs button { min-height: 44px; border: 0; border-radius: 10px; color: var(--ink); background: transparent; font-weight: 800; }
+.invest-tabs button.active { background: var(--teal-100); box-shadow: inset 0 0 0 2px var(--teal-800); }
+.more-dialog .bank-card { margin: 18px 0 0; }
+/* لما في عمليات تنتظر المراجعة تطلع بطاقة الإشعارات أول القائمة تحت العنوان */
+#more-dialog[open] { display: flex; flex-direction: column; }
+#more-dialog .dialog-heading { order: -2; }
+#more-dialog .bank-card.has-pending { order: -1; margin: 0 0 18px; }
+/* خانة «كم يبقى لك؟» بالجوال: النتيجة أول وبعرض كامل، والأربعة بعدها في شبكة 2×2 بدل شريط يتمرر جانبياً */
+@media (max-width: 600px) {
+  .cashflow-steps { grid-template-columns: 1fr 1fr; overflow: visible; margin-inline: 0; padding: 0; }
+  .cashflow-steps i { display: none; }
+  .cashflow-steps div { min-width: 0; }
+  .cashflow-steps div.available { grid-column: 1 / -1; order: -1; }
+}
+@media (prefers-color-scheme: dark) { .invest-tabs button.active { box-shadow: inset 0 0 0 2px var(--text-accent); font-weight: 900; } }

@@ -330,7 +330,8 @@ function sanitizeState(raw) {
   clean.ui.sectorOverrides = {};
   if (raw.ui?.sectorOverrides && typeof raw.ui.sectorOverrides === "object") {
     for (const [code, sector] of Object.entries(raw.ui.sectorOverrides)) {
-      if (getKuwaitStock(code) && SECTOR_OPTIONS.includes(sector)) clean.ui.sectorOverrides[code] = sector;
+      const current = sector === "بنوك" ? "مالية" : sector; // الاسم القديم للقطاع قبل 8 أكتوبر 2026
+      if (getKuwaitStock(code) && SECTOR_OPTIONS.includes(current)) clean.ui.sectorOverrides[code] = current;
     }
   }
   clean.ui.dividends = {};
@@ -568,7 +569,7 @@ function bankMessageHash(message) {
   return h1.toString(36) + h2.toString(36);
 }
 
-/* الرسائل الترويجية وتحيات البنك ما تصير مسودات: المسودة لإشعار فيه مبلغ ما قدرنا نقرأه. */
+/* الرسائل الترويجية والتحيات ما تصير مسودات: المسودة لإشعار فيه مبلغ ما قدرنا نقرأه. */
 function looksFinancial(raw) {
   const text = normalizeDigits(String(raw ?? "")).replaceAll("٫", ".");
   return /\d/.test(text) && /(?:KWD|KD|د\.ك|دينار|USD|EUR|GBP|AED|SAR|\b[A-Z]{3}\b)/i.test(text);
@@ -633,7 +634,7 @@ function ingestBankText(raw, { fromFile = false, dateOverrideISO = "" } = {}) {
 function manualBankMessage(notification) {
   if (notification.reason === "no_amount") return "النص ناقص أو ما فيه مبلغ. انسخ الرسالة كاملة من أولها لآخرها (فيها «مبلغ … د.ك»)، أو أضفها يدويًا.";
   if (notification.reason === "foreign" && notification.foreign) {
-    return `عملة أجنبية: ${notification.foreign.currency} ${notification.foreign.amount} — أضفها يدوياً بالدينار حسب مبلغ كشف البنك.`;
+    return `عملة أجنبية: ${notification.foreign.currency} ${notification.foreign.amount} — أضفها يدوياً بالدينار حسب مبلغ كشف حسابك.`;
   }
   return `${NOTIFICATION_REASONS[notification.reason] ?? "ما قدرت أحدد العملية تلقائيًا"}. راجع النص أو أضفها يدويًا.`;
 }
@@ -648,7 +649,7 @@ function showBankManual(notification) {
 
 function reportBankSummary(summary) {
   const parts = [];
-  if (summary.queued) parts.push(summary.queued === 1 && summary.total === 1 ? "وصل إشعار من البنك — راجعه واعتمده" : `أضفت ${countLabel(summary.queued, "transaction")} للمراجعة`);
+  if (summary.queued) parts.push(summary.queued === 1 && summary.total === 1 ? "وصل إشعار — راجعه واعتمده" : `أضفت ${countLabel(summary.queued, "transaction")} للمراجعة`);
   if (summary.possible) parts.push(`${countLabel(summary.possible, "transaction")} قد تكون مكررة`);
   if (summary.duplicates) parts.push(`${countLabel(summary.duplicates, "transaction")} مكررة تجاهلتها`);
   if (summary.drafts) parts.push(`${countLabel(summary.drafts, "notification")} تحتاج مبلغاً بالدينار`);
@@ -886,16 +887,16 @@ function renderDashboard() {
   setText("#flow-commitments", formatMoney(surplus.commitmentsFils));
   setText("#flow-expenses", livingKnown ? formatMoney(surplus.livingFils) : "—");
   // العجز قد يكون سالباً: نعرضه بعلامته لا مقصوصاً على صفر (F4)
-  setText("#flow-available-label", livingKnown && surplus.surplusFils < 0 ? "العجز الشهري" : "الفائض الشهري");
-  setText("#flow-available", livingKnown ? formatMoney(surplus.surplusFils) : "—");
+  setText("#flow-available-label", livingKnown && surplus.surplusFils < 0 ? "ينقصك" : "يبقى لك");
+  setText("#flow-available", livingKnown ? formatMoney(Math.abs(surplus.surplusFils)) : "—"); // «ينقصك» مع رقم موجب: لا ننحرج بسالب مع «ينقصك»
   $("#flow-available").classList.toggle("amount-negative", livingKnown && surplus.surplusFils < 0);
   $("#flow-available").parentElement.classList.toggle("is-deficit", livingKnown && surplus.surplusFils < 0);
   setText("#flow-caption", (context.living.source === "transactions"
-    ? `المعيشة = متوسط آخر ${countLabel(context.living.months, "month")} مكتملة بدون الأقساط، ونفس الرقم في الخطة والأهداف.`
+    ? `معيشتك = متوسط صرفك آخر ${countLabel(context.living.months, "month")} بدون الأقساط.`
     : context.living.source === "budget"
-      ? "المعيشة من ميزانيتك المسجلة لأن ما فيه 3 أشهر مكتملة من المصروفات."
-      : "نحتاج 3 أشهر مكتملة من المصروفات أو ميزانية شهرية من الإعدادات لحساب الفائض.") +
-    ` صرفك هذا الشهر حتى الآن ${formatMoney(context.spentFils)}.`);
+      ? "معيشتك من الميزانية اللي سجلتها."
+      : "سجّل صرف 3 أشهر أو حدد ميزانيتك بالإعدادات عشان نحسب كم يبقى لك.") +
+    ` صرفك هالشهر لين الحين: ${formatMoney(context.spentFils)}.`);
 
   if (context.forecast?.sufficient) {
     setText("#forecast-status", "تقديري");
@@ -962,10 +963,10 @@ function renderSpendingBehavior() {
   const importedEnd = state.statementImport.coverageEndISO || report.toISO;
   const firstTransaction = report.recordedStartISO ? formatDate(report.recordedStartISO) : formatDate(importedStart);
   const lastTransaction = report.recordedEndISO ? formatDate(report.recordedEndISO) : formatDate(importedEnd);
-  setText("#behavior-coverage", `نافذة التحليل: ${formatDate(report.fromISO)} إلى ${formatDate(report.toISO)} · أقدم وآخر حركة مسجلة: ${firstTransaction} إلى ${lastTransaction} · ${countLabel(report.activeMonths, "month")} فيها مصروفات من ${countLabel(report.count, "transaction")} معتمدة. تأكد أن ملف البنك يغطي الفترة كاملة؛ الشهر الخالي من العمليات قد يكون بلا صرف أو خارج الملف.`);
+  setText("#behavior-coverage", `نافذة التحليل: ${formatDate(report.fromISO)} إلى ${formatDate(report.toISO)} · أقدم وآخر حركة مسجلة: ${firstTransaction} إلى ${lastTransaction} · ${countLabel(report.activeMonths, "month")} فيها مصروفات من ${countLabel(report.count, "transaction")} معتمدة. تأكد أن ملف الكشف يغطي الفترة كاملة؛ الشهر الخالي من العمليات قد يكون بلا صرف أو خارج الملف.`);
 }
 
-const sourceLabel = (source) => source === "manual" ? "يدوي" : source === "bank-statement" ? "من الكشف" : "من البنك";
+const sourceLabel = (source) => source === "manual" ? "يدوي" : source === "bank-statement" ? "من الكشف" : "من الإشعار";
 const cardChip = (item) => item.cardLast4 ? ` · ${item.cardKind === "account" ? "حساب" : "بطاقة"} ••${escapeHTML(item.cardLast4)}` : "";
 
 /* البحث يشمل الاسم الخام والتصنيف والتاريخ والمبلغ، ويوحّد الأرقام والفواصل العربية قبل المقارنة (F50). */
@@ -978,9 +979,9 @@ function transactionMatches(item, query) {
 function draftLine(draft) {
   const foreign = draft.foreignCurrency ? `${draft.foreignCurrency} ${draft.foreignAmount}` : "";
   return `<article class="bank-draft" data-draft-id="${escapeHTML(draft.id)}">
-    <strong>${escapeHTML(draft.merchant || "إشعار بنك")}</strong>
+    <strong>${escapeHTML(draft.merchant || "إشعار عملية")}</strong>
     <p>${escapeHTML(cutText(draft.raw, 220))}</p>
-    <small>${escapeHTML(foreign ? `بعملة ${foreign} — أدخل المبلغ بالدينار من كشف البنك` : (NOTIFICATION_REASONS[draft.reason] ?? "ما قدرت أحدد المبلغ"))}${draft.dateISO ? ` · ${escapeHTML(formatDate(draft.dateISO))}` : ""}</small>
+    <small>${escapeHTML(foreign ? `بعملة ${foreign} — أدخل المبلغ بالدينار من كشف حسابك` : (NOTIFICATION_REASONS[draft.reason] ?? "ما قدرت أحدد المبلغ"))}${draft.dateISO ? ` · ${escapeHTML(formatDate(draft.dateISO))}` : ""}</small>
     <div class="row">
       <button type="button" class="primary small" data-draft-amount="${escapeHTML(draft.id)}">أدخل المبلغ بالدينار</button>
       <button type="button" class="ghost small" data-draft-delete="${escapeHTML(draft.id)}">تجاهل</button>
@@ -1034,7 +1035,7 @@ function renderTransactions() {
 }
 
 function paymentMethodLabel(value) {
-  return { bank: "حساب بنكي", credit_card: "بطاقة ائتمان", cash: "نقدي", other: "أخرى" }[value] ?? "أخرى";
+  return { bank: "خصم من الحساب", credit_card: "بطاقة ائتمان", cash: "نقدي", other: "أخرى" }[value] ?? "أخرى";
 }
 
 function commitmentStatusInfo(commitment, today = todayISO()) {
@@ -1092,7 +1093,7 @@ async function markCommitmentPaid(commitmentId, dueDate) {
     await askConfirm(preview.clamped
       ? `رصيدك (${formatMoney(state.settings.cashFils)}) أقل من ${formatMoney(commitment.amountFils)}. نخصم ${formatMoney(preview.deductedFils)} فقط ويصير رصيدك ${formatMoney(preview.cashAfterFils)} لأنك دفعت ${name}؟`
       : `نخصم ${formatMoney(commitment.amountFils)} من رصيدك (${formatMoney(state.settings.cashFils)}) لأنك دفعت ${name}؟`, { okLabel: "اخصم من رصيدي" });
-  // نعيد الحساب بعد انتظار التأكيد: الرصيد ممكن يتغير (إشعار بنك مثلاً) والمخزّن لازم يكون اللي انخصم فعلاً
+  // نعيد الحساب بعد انتظار التأكيد: الرصيد ممكن يتغير (إشعار عملية مثلاً) والمخزّن لازم يكون اللي انخصم فعلاً
   const taken = deduct ? cashDeduction(state.settings.cashFils, commitment.amountFils) : { deductedFils: 0, cashAfterFils: state.settings.cashFils };
   const payment = { id: createId(), commitmentId, amountFils: commitment.amountFils, dueDate, paidAt: todayISO(), status: "paid", cashDeducted: taken.deductedFils > 0, cashDeductedFils: taken.deductedFils };
   state.commitmentPayments.push(payment);
@@ -1579,7 +1580,7 @@ function renderAdvisor() {
   const actionMessages = [];
   if (plan.phase === "needs_data") actionMessages.push("أدخل الدخل والميزانية الشهرية، وأضف الأقساط والالتزامات الفعلية قبل اعتماد أي توزيع.");
   else if (plan.phase === "deficit") actionMessages.push(`الأساسيات أعلى من الدخل بنحو ${formatMoney(plan.deficitFils)} شهرياً؛ أوقف الاستثمار الإضافي مؤقتاً وراجع المصروف المرن والالتزامات.`);
-  else if (plan.phase === "overdue") actionMessages.push("سدّد المتأخرات أولاً بعد تغطية الاحتياجات والأقساط الحالية؛ الخطة لا تفترض رسوم التأخير أو شروط البنك.");
+  else if (plan.phase === "overdue") actionMessages.push("سدّد المتأخرات أولاً بعد تغطية الاحتياجات والأقساط الحالية؛ الخطة لا تفترض رسوم التأخير أو شروط جهة التمويل.");
   else if (plan.phase === "build_minimum_reserve") actionMessages.push(debt.totalBalanceFils > 0
     ? "كوّن احتياطياً نقدياً يعادل شهراً واحداً من الأساسيات؛ الخطة تخصص ما يصل إلى 70٪ من الفائض لذلك والباقي لسداد دين إضافي، وتؤجل الاستثمار الإضافي حالياً."
     : "كوّن احتياطياً نقدياً يعادل شهراً واحداً من الأساسيات؛ وبعد بلوغه يمكن توجيه الفائض للاستثمار أو هدفك التالي.");
@@ -1919,7 +1920,7 @@ function submitStatementImport(event) {
   event.preventDefault();
   const batch = pendingStatementBatch;
   if (!batch) return;
-  // الحارس الأخير: نحذف فقط الصفوف اللي ظهر لها مثيل جديد بعد المعاينة (إشعار بنك مثلاً). المقارنة بالعدد، مو بالوجود،
+  // الحارس الأخير: نحذف فقط الصفوف اللي ظهر لها مثيل جديد بعد المعاينة (إشعار عملية مثلاً). المقارنة بالعدد، مو بالوجود،
   // لأن الصف الثالث من 3 متطابقة وعندك اثنتان هو شراء حقيقي له نفس بصمة الاثنتين.
   const appeared = new Map();
   for (const [fingerprint, count] of fingerprintCounts(state.transactions)) {
@@ -2038,7 +2039,7 @@ async function submitTransaction(event) {
   }
   if (record.reviewed) {
     const affected = wouldRenameOthers(record);
-    if (affected >= 2 && !(await askConfirm(`عندك ${countLabel(affected, "transaction")} غيرها بنفس اسم البنك الخام. نخلي «${cutText(record.merchant, 30)}» هو الاسم المتعلَّم لكل عملية قادمة منه؟`, { okLabel: "نعم، تعلّمه" }))) {
+    if (affected >= 2 && !(await askConfirm(`عندك ${countLabel(affected, "transaction")} غيرها بنفس الاسم اللي وصل بالإشعار أو الكشف. نخلي «${cutText(record.merchant, 30)}» هو الاسم المتعلَّم لكل عملية قادمة بهذا الاسم؟`, { okLabel: "نعم، تعلّمه" }))) {
       // ما نتعلم القاعدة، لكن نحفظ تعديل هذه العملية
     } else {
       learnMerchant(record);
@@ -2414,7 +2415,7 @@ function renderScannedLoans() {
       <div class="scan-card-head"><strong>القرض ${index + 1}</strong><span class="confidence ${confidence}">${confidence === "high" ? "قراءة واضحة" : confidence === "medium" ? "راجع البيانات" : "أكمل البيانات"}</span></div>
       <div class="form-grid">
         <label class="field ${loan.name ? "" : "needs-review"}"><span>اسم القرض ${loan.name ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — يرجى التأكيد</small>'}</span><input data-scan-field="name" maxlength="60" value="${escapeHTML(loan.name ?? "")}" placeholder="غير واضح — يرجى التأكيد"></label>
-        <label class="field ${loan.lender ? "" : "needs-review"}"><span>البنك / الجهة ${loan.lender ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — يرجى التأكيد</small>'}</span><input data-scan-field="lender" maxlength="60" value="${escapeHTML(loan.lender ?? "")}" placeholder="غير واضح — يرجى التأكيد"></label>
+        <label class="field ${loan.lender ? "" : "needs-review"}"><span>الجهة المقرضة ${loan.lender ? '<small class="field-confidence clear">مقروء</small>' : '<small class="field-confidence">غير واضح — يرجى التأكيد</small>'}</span><input data-scan-field="lender" maxlength="60" value="${escapeHTML(loan.lender ?? "")}" placeholder="غير واضح — يرجى التأكيد"></label>
         <label class="field"><span>نوع القرض</span><select data-scan-field="type">${debtTypes.map((type) => `<option value="${escapeHTML(type)}" ${type === (loan.type ?? "أخرى") ? "selected" : ""}>${escapeHTML(type)}</option>`).join("")}</select></label>
         <label class="field ${loan.originalAmountFils && !warn.original ? "" : "needs-review"}"><span>المبلغ الأصلي ${amountTag(warn.original, loan.originalAmountFils, "غير واضح — اختياري")}</span><div class="money-field"><input data-scan-field="original" inputmode="decimal" value="${loan.originalAmountFils ? moneyInput(loan.originalAmountFils) : ""}" placeholder="غير واضح"><b>د.ك</b></div></label>
       </div>
@@ -2787,6 +2788,12 @@ function renderBankCard() {
   const review = $("#bank-card-review");
   review.hidden = pending === 0;
   review.textContent = pending === 1 ? "راجع العملية الجديدة" : `راجع ${countLabel(pending, "transaction")} جديدة`;
+  // بطاقة الإشعارات صارت داخل «المزيد»: نقطة على الزر تقول إن في عمليات تنتظر المراجعة
+  const badge = $("#more-badge");
+  badge.hidden = pending === 0;
+  badge.textContent = pending > 9 ? "9+" : pending.toLocaleString("ar-KW-u-nu-latn");
+  $("#bank-card").classList.toggle("has-pending", pending > 0);
+  $("#more-nav-button").setAttribute("aria-label", pending ? `المزيد، ${countLabel(pending, "transaction")} للمراجعة` : "المزيد");
 }
 
 const FIELD_LABELS = { title: "العنوان", subtitle: "العنوان الفرعي", body: "النص" };
@@ -2848,7 +2855,7 @@ function handleBankAutomationLink() {
   if (lockedNow) {
     // كان الإشعار يُحفظ ويُعرض خلف شاشة القفل، والعنوان يُمسح فيضيع النص (F46)
     deferredBankText = bankText;
-    $("#lock-error").textContent = "وصل إشعار بنك — افتح القفل عشان أسجّله.";
+    $("#lock-error").textContent = "وصل إشعار — افتح القفل عشان أسجّله.";
     return true;
   }
   reportBankSummary(ingestBankText(bankText));
@@ -2914,12 +2921,12 @@ function switchView(target, updateHash = true) {
   if (!$( `[data-view="${target}"]` )) target = "dashboard";
   $$(".view").forEach((view) => view.classList.toggle("active", view.dataset.view === target));
   $$("[data-target]").forEach((button) => {
-    const active = button.dataset.target === target;
+    const active = button.dataset.target === target || button.dataset.activeFor === target;
     button.classList.toggle("active", active);
     if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  const moreActive = ["advisor", "investment", "gold", "goals", "checkup", "spending"].includes(target);
+  const moreActive = ["advisor", "goals", "checkup", "spending"].includes(target);
   $("#more-nav-button").classList.toggle("active", moreActive);
   if (moreActive) $("#more-nav-button").setAttribute("aria-current", "page");
   else $("#more-nav-button").removeAttribute("aria-current");
@@ -3488,6 +3495,7 @@ function bindEvents() {
   $("#bank-file").addEventListener("change", async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
+    if ($("#more-dialog").open) closeDialog($("#more-dialog"));
     try { await importBankFile(file); } catch { toast("ما قدرت أقرأ الملف"); }
   });
   $("#bank-paste-clipboard").addEventListener("click", async () => {
