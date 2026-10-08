@@ -51,18 +51,6 @@
       </div>
 
       <div class="nudges" id="nudges" hidden></div>
-      <section class="bank-card" id="bank-card">
-        <div class="section-heading"><div><span class="eyebrow">إشعارات البنك</span><h2>سجّل مصروفك من البنك</h2></div><span class="pill" id="bank-card-pending" hidden>0</span></div>
-        <p class="bank-card-copy" id="bank-card-copy"><span class="web-only">الآيفون يجمع إشعارات البنك في ملف، وأنت تضغط «جلب الإشعارات» وتختاره. </span><span class="native-only">الصق رسالة البنك أو اختر ملفاً نصياً فيه الإشعارات، وراجع كل عملية قبل ما تنضاف. </span><span class="pill">مؤكد لإشعار البطاقة وخصم الحساب</span></p>
-        <div class="bank-card-actions">
-          <label class="primary file-button">جلب الإشعارات<input type="file" id="bank-file" accept=".txt,text/plain" hidden></label>
-          <button type="button" class="secondary" data-action="paste-bank">لصق رسالة</button>
-          <button type="button" class="secondary" data-action="new-transaction">＋ يدوي</button>
-        </div>
-        <button type="button" class="secondary bank-card-statement" data-action="import-statement">رفع كشف حساب الشهر</button>
-        <button type="button" class="primary bank-card-review" id="bank-card-review" data-action="review-pending" hidden>راجع العمليات الجديدة</button>
-        <button type="button" class="link-button web-only" data-action="bank-automation-guide">طريقة الربط مع الآيفون (مرة وحدة)</button>
-      </section>
       <section class="daily-budget-card" id="daily-budget-card">
         <div class="daily-budget-head">
           <div><span class="eyebrow">محسوب من بياناتك الفعلية</span><h2>ميزانيتك الآمنة اليوم</h2></div>
@@ -105,13 +93,13 @@
       </div>
 
       <section class="panel cashflow-panel">
-        <div class="section-heading"><div><span class="eyebrow">من الدخل إلى الفائض</span><h2>مسار فلوسك الشهري</h2></div><span class="pill">شهري</span></div>
+        <div class="section-heading"><div><span class="eyebrow">كل شهر</span><h2>كم يبقى لك؟</h2></div></div>
         <div class="cashflow-steps" id="cashflow-steps">
-          <div><span>الدخل</span><strong id="flow-income">0.000 د.ك</strong></div>
-          <i>←</i><div><span>الأقساط</span><strong id="flow-debts">0.000 د.ك</strong></div>
-          <i>←</i><div><span>الالتزامات</span><strong id="flow-commitments">0.000 د.ك</strong></div>
-          <i>←</i><div><span>المعيشة (متوسط)</span><strong id="flow-expenses">0.000 د.ك</strong></div>
-          <i>←</i><div class="available"><span id="flow-available-label">الفائض الشهري</span><strong id="flow-available">0.000 د.ك</strong></div>
+          <div><span>دخلك</span><strong id="flow-income">0.000 د.ك</strong></div>
+          <i>−</i><div><span>أقساطك</span><strong id="flow-debts">0.000 د.ك</strong></div>
+          <i>−</i><div><span>التزاماتك</span><strong id="flow-commitments">0.000 د.ك</strong></div>
+          <i>−</i><div><span>معيشتك</span><strong id="flow-expenses">0.000 د.ك</strong></div>
+          <i>=</i><div class="available"><span id="flow-available-label">يبقى لك</span><strong id="flow-available">0.000 د.ك</strong></div>
         </div>
         <p class="hint" id="flow-caption"></p>
       </section>
@@ -140,7 +128,7 @@
       <div class="page-title"><div><span class="eyebrow">حركة فلوسك</span><h1>العمليات</h1></div><button class="primary" data-action="new-transaction">＋ إضافة</button></div>
       <button class="secondary statement-import-button" type="button" data-action="import-statement">رفع كشف حساب (شهر أو أكثر)</button>
       <section class="pending-inbox" id="pending-inbox" hidden>
-        <div class="section-heading"><div><span class="eyebrow">وصلت من البنك</span><h2>تحتاج مراجعتك</h2></div><span class="pill" id="pending-count">0</span></div>
+        <div class="section-heading"><div><span class="eyebrow">وصلت من إشعاراتك</span><h2>تحتاج مراجعتك</h2></div><span class="pill" id="pending-count">0</span></div>
         <div class="pending-inbox-list" id="pending-inbox-list"></div>
       </section>
       <div class="toolbar-card">
@@ -149,7 +137,7 @@
       </div>
       <div id="pending-notice" class="notice warning" hidden></div>
       <div id="transaction-list" class="stack-list"></div>
-      <div id="transaction-empty" class="empty-state" hidden><span>⌁</span><h2>ما عندك عمليات</h2><p>أضفها يدوياً أو اجلب رسائل البنك.</p><button class="primary" data-action="import-bank">لصق رسالة</button></div>
+      <div id="transaction-empty" class="empty-state" hidden><span>⌁</span><h2>ما عندك عمليات</h2><p>أضفها يدوياً أو اجلب رسائل العمليات.</p><button class="primary" data-action="import-bank">لصق رسالة</button></div>
     </section>
 
     <section class="view" id="commitments-view" data-view="commitments">
@@ -173,7 +161,7 @@
 
     <section class="view" id="loans-view" data-view="loans">
       <div class="page-title"><div><span class="eyebrow">خطة السداد</span><h1>القروض والأقساط</h1></div><div class="row wrap"><button class="secondary" data-action="scan-loans">رفع صور</button><button class="primary" data-action="new-loan">＋ قرض</button></div></div>
-      <div id="loan-empty" class="empty-state" hidden><span>▤</span><h2>ما أضفت قروض بعد</h2><p>صوّر صفحة القروض والأقساط من تطبيق البنك، وحوّش يقرأها ويجهزها للمراجعة.</p><div class="row wrap"><button class="primary" data-action="scan-loans">رفع الصور</button><button class="secondary" data-action="new-loan">إدخال يدوي</button></div></div>
+      <div id="loan-empty" class="empty-state" hidden><span>▤</span><h2>ما أضفت قروض بعد</h2><p>صوّر صفحة القروض والأقساط من تطبيق جهة التمويل، وحوّش يقرأها ويجهزها للمراجعة.</p><div class="row wrap"><button class="primary" data-action="scan-loans">رفع الصور</button><button class="secondary" data-action="new-loan">إدخال يدوي</button></div></div>
       <div class="metric-grid debt-metrics">
         <article class="metric featured"><span>إجمالي الديون المتبقية</span><strong id="loans-total">0.000 د.ك</strong></article>
         <article class="metric"><span>الأقساط الشهرية</span><strong id="installments-total">0.000 د.ك</strong></article>
@@ -197,7 +185,7 @@
         <p class="hint">يُطبق الرقم على كل قرض بشكل مستقل للمقارنة، وليس توزيعاً تلقائياً بين القروض.</p>
       </section>
       <div id="loan-list" class="card-list"></div>
-      <p class="legal-note">الحساب تقديري. رسوم البنك وشروط التسوية المبكرة غير مشمولة؛ عرض البنك هو المرجع.</p>
+      <p class="legal-note">الحساب تقديري. رسوم جهة التمويل وشروط التسوية المبكرة غير مشمولة؛ عرض جهة التمويل هو المرجع.</p>
     </section>
 
     <section class="view" id="advisor-view" data-view="advisor">
@@ -259,7 +247,7 @@
 
     <section class="view" id="investment-view" data-view="investment">
       <div class="page-title"><div><span class="eyebrow">محفظتك وخطتك الطويلة</span><h1>الاستثمار والأسهم</h1></div><button class="primary" type="button" data-action="new-stock">＋ سهم كويتي</button></div>
-      <button class="secondary gold-link" type="button" data-target-view="gold">◈ محفظة الذهب</button>
+      <div class="invest-tabs" role="group" aria-label="الاستثمار"><button type="button" class="active" aria-current="page" data-target-view="investment">الأسهم</button><button type="button" data-target-view="gold">الذهب</button></div>
       <section class="panel stock-portfolio-panel">
         <div class="section-heading"><div><span class="eyebrow">محفظة الأسهم الكويتية</span><h2>القيمة والربح أو الخسارة</h2></div><span class="pill" id="stock-holdings-count">لا توجد أسهم</span></div>
         <div class="metric-grid stock-portfolio-summary">
@@ -320,7 +308,8 @@
     </section>
 
     <section class="view" id="gold-view" data-view="gold">
-      <div class="page-title"><div><span class="eyebrow">الاستثمار</span><h1>محفظة الذهب</h1></div><button class="secondary small" type="button" data-target-view="investment">الأسهم</button></div>
+      <div class="page-title"><div><span class="eyebrow">الاستثمار</span><h1>محفظة الذهب</h1></div></div>
+      <div class="invest-tabs" role="group" aria-label="الاستثمار"><button type="button" data-target-view="investment">الأسهم</button><button type="button" class="active" aria-current="page" data-target-view="gold">الذهب</button></div>
       <div id="gold-root"></div>
     </section>
 
@@ -336,7 +325,7 @@
       <section class="panel behavior-panel" id="behavior-panel">
         <div class="section-heading"><div><span class="eyebrow">قراءة من معاملاتك الفعلية</span><h2>سلوك صرفك · آخر 12 شهر</h2></div><button type="button" class="secondary small" data-action="import-statement">＋ كشف حساب</button></div>
         <p class="hint">نحلل المصروفات المعتمدة ونوضح الأنماط بالأرقام؛ ما نخمن صفات شخصية من مشترياتك.</p>
-        <div id="behavior-empty" class="behavior-empty"><strong>ما عندنا كشف 12 شهر للحين</strong><span>نزّل كشف معاملاتك من البنك بصيغة PDF أو CSV أو OFX، وبعدها اختره هنا. الملف يُقرأ على جهازك.</span><button type="button" class="primary" data-action="import-statement">اختيار كشف حساب</button></div>
+        <div id="behavior-empty" class="behavior-empty"><strong>ما عندنا كشف 12 شهر للحين</strong><span>نزّل كشف معاملاتك من تطبيق حسابك بصيغة PDF أو CSV أو OFX، وبعدها اختره هنا. الملف يُقرأ على جهازك.</span><button type="button" class="primary" data-action="import-statement">اختيار كشف حساب</button></div>
         <div id="behavior-content" hidden>
           <div class="metric-grid behavior-metrics">
             <article class="metric featured"><span>إجمالي المصروفات المحللة</span><strong id="behavior-total">0.000 د.ك</strong></article>
@@ -376,7 +365,8 @@
     <button data-target="transactions"><span>▤</span>العمليات</button>
     <button data-target="commitments"><span>◷</span>الالتزامات</button>
     <button data-target="loans"><span>▦</span>القروض</button>
-    <button type="button" id="more-nav-button" data-action="open-more" aria-haspopup="dialog" aria-controls="more-dialog"><span>⋯</span>المزيد</button>
+    <button data-target="investment" data-active-for="gold"><span>↗</span>الاستثمار</button>
+    <button type="button" id="more-nav-button" data-action="open-more" aria-haspopup="dialog" aria-controls="more-dialog"><span>⋯</span>المزيد<b class="nav-badge" id="more-badge" aria-hidden="true" hidden></b></button>
   </nav>
 
   <dialog id="more-dialog" class="more-dialog">
@@ -384,18 +374,22 @@
     <div class="more-menu">
       <button type="button" data-action="open-onboarding"><span>✦</span><strong>رتّب لي كل شي</strong><small>3 أسئلة وأضبط لك الخطة</small></button>
       <button type="button" data-target="advisor"><span>❖</span><strong>خطة الشهر</strong><small>خطة الراتب وحاسبة فلوسك</small></button>
-      <button type="button" data-target="investment"><span>↗</span><strong>الاستثمار</strong><small>محفظة الأسهم</small></button>
-      <button type="button" data-target="gold"><span>◈</span><strong>محفظة الذهب</strong><small>مشترياتك وسعر اليوم وسعرك المستهدف</small></button>
       <button type="button" data-target="spending"><span>◔</span><strong>المصروف والميزانية</strong><small>الفعلي مقابل الميزانية</small></button>
       <button type="button" data-target="checkup"><span>✚</span><strong>الفحص المالي</strong><small>تقييم وزكاة وتكلفة القرض</small></button>
       <button type="button" data-target="goals"><span>◎</span><strong>الأهداف</strong><small>تابع ادخارك وتقدمك</small></button>
     </div>
-    <h3>أدوات البنك</h3>
-    <div class="more-tools">
-      <button type="button" class="secondary" data-action="import-statement">رفع كشف حساب الشهر</button>
-      <button type="button" class="secondary" data-action="import-bank">لصق رسالة بنك</button>
-      <button type="button" class="secondary web-only" data-action="bank-automation-guide">ربط إشعارات البنك</button>
-    </div>
+    <section class="bank-card" id="bank-card">
+      <div class="section-heading"><div><span class="eyebrow">إشعارات العمليات</span><h2>سجّل مصروفك من إشعارك</h2></div><span class="pill" id="bank-card-pending" hidden>0</span></div>
+      <p class="bank-card-copy" id="bank-card-copy"><span class="web-only">الآيفون يجمع إشعارات عملياتك أو رسائل SMS في ملف، وأنت تضغط «جلب الإشعارات» وتختاره. </span><span class="native-only">الصق رسالة العملية أو اختر ملفاً نصياً فيه الإشعارات، وراجع كل عملية قبل ما تنضاف. </span><span class="pill">مؤكد لإشعار البطاقة وخصم الحساب وتحويل ومض</span></p>
+      <div class="bank-card-actions">
+        <label class="primary file-button">جلب الإشعارات<input type="file" id="bank-file" accept=".txt,text/plain" hidden></label>
+        <button type="button" class="secondary" data-action="paste-bank">لصق رسالة</button>
+        <button type="button" class="secondary" data-action="new-transaction">＋ يدوي</button>
+      </div>
+      <button type="button" class="secondary bank-card-statement" data-action="import-statement">رفع كشف حساب الشهر</button>
+      <button type="button" class="primary bank-card-review" id="bank-card-review" data-action="review-pending" hidden>راجع العمليات الجديدة</button>
+      <button type="button" class="link-button web-only" data-action="bank-automation-guide">طريقة الربط مع الآيفون (مرة وحدة)</button>
+    </section>
   </dialog>
 
   <dialog id="portfolio-import-dialog">
@@ -423,7 +417,7 @@
 
   <dialog id="bank-dialog">
     <form id="bank-form" novalidate>
-      <div class="dialog-heading"><h2>لصق تنبيه البنك</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="dialog-heading"><h2>لصق تنبيه العملية</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
       <div class="notice">الصق إشعاراً واحداً أو عدة إشعارات (افصل بينها بسطر فاضي). يفهم حوّش الشراء والسحب والتحويل والراتب والاسترداد، ويتجاهل رمز التحقق والعمليات المرفوضة، وتراجع كل شيء قبل الاعتماد.</div>
       <div class="notice warning web-only" id="bank-browser-note" hidden>أنت فاتح حوّش من Safari، مو من أيقونة حوّش. اللي تضيفه هنا ما يوصل بياناتك اللي بالأيقونة (التخزين منفصل). افتح أيقونة حوّش من الشاشة الرئيسية وجرب من هناك.</div>
       <button type="button" class="secondary" id="bank-paste-clipboard">لصق من الحافظة</button>
@@ -437,10 +431,10 @@
 
   <dialog id="statement-import-dialog" class="wide-dialog">
     <form id="statement-import-form" novalidate>
-      <div class="dialog-heading"><div><h2>رفع كشف حساب</h2><span class="eyebrow">كشف البنك · شهر أو أكثر · مراجعة قبل الإضافة</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
-      <div class="notice privacy-notice">نزّل كشف المعاملات من البنك، ثم اختر الملف هنا. «حوّش» ما يطلب بيانات دخول البنك، ويقرأ الملف محليًا على جهازك. لتحليل مشتريات الفيزا بالتفصيل ارفع كشف البطاقة أيضًا؛ تسديد البطاقة من الحساب يُستبعد حتى ما ينحسب الشراء مرتين.</div>
+      <div class="dialog-heading"><div><h2>رفع كشف حساب</h2><span class="eyebrow">كشف الحساب · شهر أو أكثر · مراجعة قبل الإضافة</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="notice privacy-notice">نزّل كشف المعاملات من تطبيق حسابك، ثم اختر الملف هنا. «حوّش» ما يطلب بيانات دخول حسابك، ويقرأ الملف محليًا على جهازك. لتحليل مشتريات الفيزا بالتفصيل ارفع كشف البطاقة أيضًا؛ تسديد البطاقة من الحساب يُستبعد حتى ما ينحسب الشراء مرتين.</div>
       <label class="field"><span>ملف كشف الحساب</span><input id="statement-file" type="file" accept=".pdf,application/pdf,.csv,.tsv,.ofx,.qfx,.txt,text/csv,text/tab-separated-values,application/x-ofx,application/vnd.intu.qfx"></label>
-      <p class="hint">الصيغ المدعومة PDF وCSV وTSV وOFX/QFX. دعم PDF حالياً لكشف حساب البنك النصي بالعربي؛ الصور الممسوحة والملفات المحمية غير مدعومة. نضيف المصروفات فقط؛ الإيداعات والتحويلات بين الحسابات تستبعد من تحليل الصرف.</p>
+      <p class="hint">الصيغ المدعومة PDF وCSV وTSV وOFX/QFX. دعم PDF حالياً لكشف الحساب النصي بالعربي؛ الصور الممسوحة والملفات المحمية غير مدعومة. نضيف المصروفات فقط؛ الإيداعات والتحويلات بين الحسابات تستبعد من تحليل الصرف.</p>
       <p class="hint" id="statement-import-progress" role="status" aria-live="polite" hidden></p>
       <p class="form-error" id="statement-import-error" role="alert"></p>
       <section id="statement-import-preview" class="statement-import-preview" hidden>
@@ -476,7 +470,7 @@
         <label class="field"><span>المبلغ</span><div class="money-field"><input id="commitment-amount" required inputmode="decimal" placeholder="0.000"><b>د.ك</b></div></label>
         <label class="field"><span>تاريخ أول/قادم استحقاق</span><input id="commitment-due-date" type="date" min="2000-01-01" required></label>
         <label class="field"><span>التكرار</span><select id="commitment-recurrence"><option value="monthly">شهري</option><option value="quarterly">كل 3 أشهر</option><option value="semiannual">كل 6 أشهر</option><option value="annual">سنوي</option><option value="once">مرة واحدة</option></select></label>
-        <label class="field"><span>طريقة الدفع</span><select id="commitment-payment-method"><option value="bank">حساب بنكي</option><option value="credit_card">بطاقة ائتمان</option><option value="cash">نقدي</option><option value="other">أخرى</option></select></label>
+        <label class="field"><span>طريقة الدفع</span><select id="commitment-payment-method"><option value="bank">خصم من الحساب</option><option value="credit_card">بطاقة ائتمان</option><option value="cash">نقدي</option><option value="other">أخرى</option></select></label>
         <label class="field"><span>الحالة</span><select id="commitment-status"><option value="active">نشط</option><option value="paused">متوقف مؤقتاً</option><option value="completed">مكتمل</option></select></label>
       </div>
       <label class="field"><span>ملاحظات اختيارية</span><textarea id="commitment-notes" rows="3" maxlength="500" placeholder="أي تفاصيل تساعدك لاحقاً"></textarea></label>
@@ -491,7 +485,7 @@
       <input type="hidden" id="loan-id">
       <div class="form-grid">
         <label class="field"><span>اسم القرض أو القسط</span><input id="loan-name" required maxlength="60" placeholder="مثال: التمويل الشخصي"></label>
-        <label class="field"><span>البنك / الجهة</span><input id="loan-lender" maxlength="60" placeholder="مثال: اسم البنك"></label>
+        <label class="field"><span>الجهة المقرضة</span><input id="loan-lender" maxlength="60" placeholder="مثال: اسم جهة التمويل"></label>
         <label class="field"><span>نوع القرض</span><select id="loan-type"></select></label>
         <label class="field"><span>الحالة</span><select id="loan-status"><option value="active">نشط</option><option value="completed">مكتمل</option><option value="overdue">متأخر</option><option value="stopped">متوقف</option></select></label>
         <label class="field"><span>المبلغ الأصلي</span><div class="money-field"><input id="loan-original" required inputmode="decimal"><b>د.ك</b></div></label>
@@ -669,7 +663,7 @@
       <section class="data-actions" id="security-actions"><h3>الحماية</h3><p><strong id="lock-status">القفل غير مفعّل</strong><br>القفل يمنع فتح التطبيق بدون الرمز، لكنه لا يشفّر البيانات المخزنة <span class="web-only">في المتصفح</span><span class="native-only">على الجهاز</span>. ما فيه استرجاع للرمز لو نسيته.</p><div class="row wrap"><button type="button" class="secondary" id="lock-setup">تفعيل القفل</button><button type="button" class="secondary" id="lock-now" hidden>قفل الحين</button><button type="button" class="danger" id="lock-disable" hidden>إيقاف القفل</button><button type="button" class="secondary" id="restore-snapshot" hidden>استرجاع النسخة التلقائية</button></div></section>
       <section class="data-actions native-only" id="native-security"><h3 id="biometric-title">فتح التطبيق بـ Face ID</h3><label class="switch-row"><span id="biometric-label">استخدم Face ID مع الرمز</span><input type="checkbox" role="switch" id="biometric-toggle"></label><p class="hint" id="biometric-hint" role="status"></p></section>
       <section class="data-actions native-only" id="native-reminders"><h3>التذكيرات</h3><label class="switch-row"><span>ذكّرني بالأقساط والالتزامات والمعاش</span><input type="checkbox" role="switch" id="reminders-toggle"></label><p class="hint" id="reminders-hint" role="status"></p><button type="button" class="secondary small" id="open-ios-settings" hidden>فتح إعدادات الآيفون</button></section>
-      <section class="data-actions web-only" id="bank-shortcut-settings"><h3>إشعارات البنك</h3><p>خلّ الآيفون يجمع إشعارات البنك في ملف يقرأه حوّش.</p><button type="button" class="secondary web-only" data-action="bank-automation-guide">عرض خطوات الربط</button>
+      <section class="data-actions web-only" id="bank-shortcut-settings"><h3>ربط الإشعارات والرسائل</h3><p>خلّ الآيفون يجمع إشعارات عملياتك أو رسائل SMS في ملف يقرأه حوّش.</p><button type="button" class="secondary web-only" data-action="bank-automation-guide">عرض خطوات الربط</button>
         <div class="bank-fields"><p><strong>حقول الإشعار في الاختصار:</strong> <span id="bank-field-summary"></span><br><small>حوّش يفهم الإشعار بأي ترتيب. غيّر هنا فقط إذا اخترت الحقول بنفسك في الاختصار.</small></p>
           <div class="bank-field-row"><label class="field"><span>الأول</span><select data-bank-field="0"></select></label><label class="field"><span>الثاني</span><select data-bank-field="1"></select></label><label class="field"><span>الثالث</span><select data-bank-field="2"></select></label></div>
           <button type="button" class="ghost small" id="bank-field-reset">رجوع للافتراضي</button></div></section>
@@ -680,15 +674,28 @@
 
   <dialog id="bank-automation-dialog" class="wide-dialog web-only">
     <form method="dialog">
-      <div class="dialog-heading"><div><h2>ربط إشعارات البنك بالآيفون</h2><span class="eyebrow">إعداد مرة وحدة · دقيقتين</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
-      <div class="notice privacy-notice"><p>🔒 حوّش ما يدخل حسابك البنكي. الآيفون يحفظ نص الإشعار في ملف على جهازك، وحوّش يقرأه لما تطلب.</p></div>
-      <ol class="setup-steps">
-        <li><strong>في تطبيق «الاختصارات»</strong><span>الأتمتة ← ＋ ← «إشعار» ← اختر تطبيق البنك ← «تشغيل فوراً».</span></li>
-        <li><strong>أضف «إلحاق بملف نصي»</strong><span>النص: <code>التاريخ الحالي</code> ثم سطر جديد ثم <code>مدخل الاختصار</code>. اسم الملف: <code>fils-bank.txt</code>. ما تحتاج تختار حقول أو تنسيق.</span></li>
-        <li><strong>في حوّش</strong><span>اضغط «جلب الإشعارات» واختر fils-bank.txt من مجلد Shortcuts. المكرر ما ينضاف.</span></li>
-      </ol>
-      <p class="hint">جهازك أقدم من iOS 27؟ اختر «رسالة» بدل «إشعار» وحدد مرسل البنك.</p>
-      <p class="notice warning"><strong>مؤكد من رسائلك:</strong> إشعار البطاقة (المبلغ، نوع البطاقة، التاجر) و«خصم من حساب… الرصيد». <strong>تجريبي:</strong> باقي الصيغ (السحب، التحويل، الراتب، الاسترداد) لين توصلنا رسالة حقيقية منها. أي إشعار ما ينفهم يفتح لك شاشة اللصق، ولا يضيف رقماً غير مؤكد.</p>
+      <div class="dialog-heading"><div><h2>ربط الإشعارات والرسائل بالآيفون</h2><span class="eyebrow">إعداد مرة وحدة · دقيقتين</span></div><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
+      <div class="notice privacy-notice"><p>🔒 حوّش ما يدخل حساباتك المالية ولا يطلب بيانات دخولها. الآيفون يحفظ نص الإشعار أو الرسالة في ملف على جهازك، وحوّش يقرأه لما تطلب.</p></div>
+      <p class="hint">اختر طريقة وحدة بس. لو ربطت الاثنتين ممكن توصل نفس العملية مرتين.</p>
+      <details class="route-section">
+        <summary><strong>إشعارات التطبيق</strong><small>iOS 27 وأحدث</small></summary>
+        <ol class="setup-steps">
+          <li><strong>في تطبيق «الاختصارات»</strong><span>الأتمتة ← ＋ ← «إشعار» ← اختر التطبيق اللي توصلك منه إشعارات الدفع والخصم ← «تشغيل فوراً».</span></li>
+          <li><strong>أضف «إلحاق بملف نصي»</strong><span>النص: <code>التاريخ الحالي</code> ثم سطر جديد ثم <code>مدخل الاختصار</code>. اسم الملف: <code>fils-bank.txt</code>. ما تحتاج تختار حقول أو تنسيق.</span></li>
+          <li><strong>في حوّش</strong><span>اضغط «جلب الإشعارات» واختر fils-bank.txt من مجلد Shortcuts. المكرر ما ينضاف.</span></li>
+        </ol>
+      </details>
+      <details class="route-section" id="bank-sms-route">
+        <summary><strong>رسائل SMS</strong><small>بديلة لإشعارات التطبيق</small></summary>
+        <ol class="setup-steps">
+          <li><strong>في تطبيق «الاختصارات»</strong><span>الأتمتة ← ＋ ← «رسالة» ← «المرسل»: اختر مرسل رسائل عملياتك لو ظهر عندك (غالباً لازم يكون محفوظ بجهات الاتصال) ← «تشغيل فوراً».</span></li>
+          <li><strong>إذا ما ظهر المرسل</strong><span>اترك «المرسل» فاضي واكتب في «الرسالة تحتوي» كلمة موجودة في كل رسائل عملياتك، مثل <code>KWD</code> أو <code>د.ك</code>. الأتمتة تقبل كلمة وحدة، فلو رسائلك فيها الاثنين سوّ أتمتة ثانية بنفس الخطوات.</span></li>
+          <li><strong>أضف «إلحاق بملف نصي»</strong><span>النص: <code>التاريخ الحالي</code> ثم سطر جديد ثم <code>مدخل الاختصار</code>. نفس اسم الملف: <code>fils-bank.txt</code>.</span></li>
+          <li><strong>في حوّش</strong><span>اضغط «جلب الإشعارات» واختر الملف نفسه. المكرر ما ينضاف.</span></li>
+        </ol>
+        <p class="hint">طريقة الرسائل ما انجرّبت على جهازك بعد. إذا ما اشتغلت، ارسل لنا لقطة من الأتمتة ونعدّلها.</p>
+      </details>
+      <p class="notice warning"><strong>مؤكد من رسائلك:</strong> إشعار البطاقة (المبلغ، نوع البطاقة، التاجر) و«خصم من حساب… الرصيد» و«تحويل ومض… الرصيد المتوفر». <strong>تجريبي:</strong> باقي الصيغ (السحب، الراتب، الاسترداد) لين توصلنا رسالة حقيقية منها. أي إشعار ما ينفهم يفتح لك شاشة اللصق، ولا يضيف رقماً غير مؤكد.</p>
       <p class="hint">رموز التحقق والعمليات المرفوضة وتسديد البطاقة تُتجاهل. كل عملية جديدة تنتظر اعتمادك قبل ما تدخل الحسابات. لو إشعار ما انفهم، انسخه من «لصق رسالة» وأرسله لنا عشان نعلّم حوّش عليه.</p>
       <div class="dialog-actions single"><button type="button" class="primary close-dialog">تم</button></div>
     </form>

@@ -92,8 +92,8 @@ export function zakat({ goldGramPriceFils = 0, assetsFils = 0, shortTermDebtFils
 }
 
 /* ---------- 5) تركز المحفظة والتوزيعات ---------- */
-const SECTORS = { 1: "بنوك", 2: "استثمار", 3: "تأمين", 4: "عقار" };
-export const SECTOR_OPTIONS = ["بنوك", "استثمار", "تأمين", "عقار", "صناعة", "خدمات", "أغذية", "طاقة", "اتصالات", "أخرى"];
+const SECTORS = { 1: "مالية", 2: "استثمار", 3: "تأمين", 4: "عقار" };
+export const SECTOR_OPTIONS = ["مالية", "استثمار", "تأمين", "عقار", "صناعة", "خدمات", "أغذية", "طاقة", "اتصالات", "أخرى"];
 /* التقدير الافتراضي من أول رقم بالرمز غير مؤكد رسمياً؛ المستخدم يقدر يغيّره لكل سهم. */
 export function sectorOf(code = "", overrides = {}) {
   if (SECTOR_OPTIONS.includes(overrides?.[code])) return overrides[code];
@@ -262,7 +262,7 @@ export function mountCheckup(root, { getModel, getUi, setUi }) {
           <h3>حسب القطاع</h3>
           <div class="advisor-budget-list">${conc.sectors.map((s) => `<div><span>${esc(s.sector)}</span><strong>${n1(s.sharePercent)}٪</strong></div>`).join("")}</div>
           ${conc.warnings.map((w) => `<p class="hint warn-hint">⚠ ${esc(w)}</p>`).join("") || `<p class="hint">توزيع المحفظة متوازن نسبياً.</p>`}
-          <p class="hint">القطاع الافتراضي تقدير من أول رقم بالرمز (1 بنوك، 2 استثمار، 3 تأمين، 4 عقار) ولم أتحقق منه رسمياً. غيّره لكل سهم من القائمة إذا كان تصنيفه مختلفاً.</p>`
+          <p class="hint">القطاع الافتراضي تقدير من أول رقم بالرمز (1 مالية، 2 استثمار، 3 تأمين، 4 عقار) ولم أتحقق منه رسمياً. غيّره لكل سهم من القائمة إذا كان تصنيفه مختلفاً.</p>`
         : `<p class="hint">أضف أسهماً في صفحة الاستثمار لعرض التركز.</p>`}
       </section>
 

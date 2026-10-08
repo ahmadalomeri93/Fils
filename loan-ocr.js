@@ -87,9 +87,9 @@ function labeledDate(text, labels) {
 
 function inferLender(text) {
   const lenders = [
-    [/(boubyan|بوبيان)/i, "بنك بوبيان"], [/(kfh|kuwait finance house|بيتك|بيت التمويل)/i, "بيت التمويل الكويتي"],
-    [/(nbk|national bank of kuwait|الوطني)/i, "بنك الكويت الوطني"], [/(gulf bank|بنك الخليج)/i, "بنك الخليج"],
-    [/(burgan|برقان)/i, "بنك برقان"], [/(warba|وربة)/i, "بنك وربة"]
+    [/(boubyan|بوبيان)/i, "بوبيان"], [/(kfh|kuwait finance house|بيتك|بيت التمويل)/i, "بيت التمويل الكويتي"],
+    [/(nbk|national bank of kuwait|الوطني)/i, "الكويت الوطني"], [/(gulf bank|بنك الخليج)/i, "الخليج"],
+    [/(burgan|برقان)/i, "برقان"], [/(warba|وربة)/i, "وربة"]
   ];
   return lenders.find(([pattern]) => pattern.test(text))?.[1] ?? "";
 }

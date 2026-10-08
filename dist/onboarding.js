@@ -78,7 +78,7 @@ export function mountOnboarding(root, { getSettings, getFixedFils = () => 0, onA
         <p class="hint">${plan.monthsToTarget === 0 ? "وصلت هدف الطوارئ أصلاً." : plan.monthsToTarget === null ? "" : `إذا وفّرت المبلغ كل شهر توصل لهدف الطوارئ بعد حوالي ${countLabel(plan.monthsToTarget, "month")}.`}
         ${plan.fixedFils > 0
           ? `حسبتها بعد أقساطك والتزاماتك المسجلة (${esc(formatMoney(plan.fixedFils))} شهرياً): من الباقي ${esc(formatMoney(plan.spendableFils))} 70٪ مصروف، 20٪ ادخار، 10٪ أمان. وهدف الطوارئ يغطي 3 شهور من المصروف والالتزامات.`
-          : "هذي أرقام مبدئية (70٪ مصروف، 20٪ ادخار، 10٪ أمان)، وتقدر تعدلها من الإعدادات. القروض والأقساط أضفها من «المزيد» ليصير الحساب أدق."}</p>`,
+          : "هذي أرقام مبدئية (70٪ مصروف، 20٪ ادخار، 10٪ أمان)، وتقدر تعدلها من الإعدادات. القروض والأقساط أضفها من تبويب «القروض» ليصير الحساب أدق."}</p>`,
         `<button type="button" class="secondary" data-ob="back">رجوع</button><button type="button" class="primary" data-ob="apply">طبّق الخطة</button>`);
       root._plan = plan;
     }

@@ -34,9 +34,9 @@ export function extractStatementPage(content, pageNumber, height) {
   const items = content.items.filter(item => typeof item.str==='string' && clean(item.str)).map(item => ({
     text:clean(item.str), dir:item.dir, x:item.transform[4], y:height-item.transform[5], width:item.width
   }));
-  if (!items.length) throw new Error('هالـPDF صور ممسوحة؛ نحتاج كشف PDF نصي من تطبيق البنك.');
+  if (!items.length) throw new Error('هالـPDF صور ممسوحة؛ نحتاج كشف PDF نصي من تطبيق حسابك.');
   const headers = Object.fromEntries(['مدين','دائن','الرصيد','التاريخ','الوصف'].map(name=>[name,items.find(item=>key(item.text)===name)]));
-  if (Object.values(headers).some(item=>!item)) throw new Error(`تنسيق كشف PDF غير مدعوم في الصفحة ${pageNumber}. المدعوم حالياً كشف حساب البنك النصي بالعربي.`);
+  if (Object.values(headers).some(item=>!item)) throw new Error(`تنسيق كشف PDF غير مدعوم في الصفحة ${pageNumber}. المدعوم حالياً كشف الحساب النصي بالعربي.`);
   const center=item=>item.x+item.width/2;
   const debitCenter=center(headers['مدين']);
   const creditCenter=center(headers['دائن']);
@@ -68,7 +68,7 @@ export function validateStatementBalances(rows) {
   for (let i=0;i<rows.length-1;i++) {
     const current=descending ? rows[i] : rows[i+1];
     const previous=descending ? rows[i+1] : rows[i];
-    if (toFils(current.Balance)!==toFils(previous.Balance)+toFils(current.Credit||'0.000')-toFils(current.Debit||'0.000')) throw new Error('رصيد PDF ما يطابق حركة العمليات. لم نحفظ أي بيانات؛ جرّب كشف البنك النصي الأصلي.');
+    if (toFils(current.Balance)!==toFils(previous.Balance)+toFils(current.Credit||'0.000')-toFils(current.Debit||'0.000')) throw new Error('رصيد PDF ما يطابق حركة العمليات. لم نحفظ أي بيانات؛ جرّب كشف الحساب النصي الأصلي.');
   }
   return rows;
 }
@@ -102,7 +102,7 @@ export async function readPDFStatement(file, onProgress=()=>{}, signal) {
     }
     return statementRowsToCSV(validateStatementBalances(rows));
   } catch(error) {
-    if(error?.name==='PasswordException') throw new Error('PDF محمي بكلمة مرور. نزّل نسخة غير محمية من البنك.');
+    if(error?.name==='PasswordException') throw new Error('PDF محمي بكلمة مرور. نزّل نسخة غير محمية من تطبيق حسابك.');
     throw error;
   } finally {
     signal?.removeEventListener('abort',abort);

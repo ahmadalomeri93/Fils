@@ -220,7 +220,7 @@ export function parseBankStatement({ text, filename = "statement.csv", todayISO,
     if (headerRow < 0) throw new Error("ما تعرفت على أعمدة الكشف. نحتاج تاريخ العملية والبيان والمبلغ أو المدين/الدائن.");
     rows = rows.slice(headerRow + 1);
   } else {
-    throw new Error("الصيغ المدعومة: CSV وTSV وOFX وQFX. نزّل كشف العمليات كملف جدولي من البنك.");
+    throw new Error("الصيغ المدعومة: CSV وTSV وOFX وQFX. نزّل كشف العمليات كملف جدولي من تطبيق حسابك.");
   }
 
   const cutoffISO = monthStartISO(todayISO, 11);
