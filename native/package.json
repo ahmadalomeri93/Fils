@@ -1,0 +1,29 @@
+{
+  "name": "hawwesh-ios",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Capacitor iPhone shell for Hawwesh. The web app lives in ../dist (or ../src/dist) and is copied in by scripts/stage-web.mjs.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "stage": "node scripts/stage-web.mjs",
+    "sync": "node scripts/stage-web.mjs && cap sync ios",
+    "patch": "node scripts/patch-ios.mjs",
+    "verify": "node scripts/patch-ios.mjs --verify",
+    "test": "node tests/stage-web.test.mjs && node tests/ios-project.test.mjs"
+  },
+  "dependencies": {
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/filesystem": "8.1.4",
+    "@capacitor/ios": "8.5.3",
+    "@capacitor/local-notifications": "8.3.1",
+    "@capacitor/preferences": "8.0.1",
+    "@capacitor/share": "8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3"
+  }
+}

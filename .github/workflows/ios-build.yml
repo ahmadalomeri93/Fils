@@ -1,0 +1,129 @@
+# DRAFT: move to .github/workflows/ios-build.yml when the founder approves (this folder is a staging area so the
+# agent never pushes workflows). Builds the iPhone app for the simulator on every push to the ios-native branch.
+# No signing, no secrets, no deployment: it only proves the project compiles and the web assets are bundled.
+#
+# Action versions are pinned to commit SHAs. Verified with `git ls-remote` on 2026-10-08:
+#   actions/checkout        v7.0.1  3d3c42e5aac5ba805825da76410c181273ba90b1
+#   actions/setup-node      v7.0.0  820762786026740c76f36085b0efc47a31fe5020
+#   actions/upload-artifact v7.0.1  043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+# Runner label `macos-26` (arm64, Xcode 26.x installed under /Applications/Xcode_26*.app):
+#   https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md
+name: iOS build (simulator)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios-native]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator-build:
+    name: Build for iOS Simulator
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+
+      - name: Select the newest Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          newest="$(ls -d /Applications/Xcode_26*.app | sort -V | tail -n 1)"
+          echo "Using ${newest}"
+          sudo xcode-select -s "${newest}/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+
+      - name: Install native dependencies
+        working-directory: native
+        run: npm ci --ignore-scripts
+
+      - name: Copy the web app into the iOS project
+        working-directory: native
+        run: |
+          node scripts/stage-web.mjs
+          npx cap sync ios
+          node scripts/patch-ios.mjs --verify
+
+      # After stage-web and cap sync on purpose: the tests read ios/App/App/capacitor.config.json and public/, which only
+      # exist after the sync (both are git-ignored). Run before the sync they fail with ENOENT on a clean checkout.
+      - name: Native project checks
+        working-directory: native
+        run: npm test
+
+      - name: Build for the iOS Simulator
+        working-directory: native
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -list -project ios/App/App.xcodeproj | tee "${RUNNER_TEMP}/xcodebuild-list.log"
+          xcodebuild build \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            2>&1 | tee "${RUNNER_TEMP}/xcodebuild.log"
+
+      - name: Check what was built
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="${RUNNER_TEMP}/DerivedData/Build/Products/Debug-iphonesimulator/App.app"
+          test -d "${app}"
+          test -f "${app}/public/index.html"
+          test -f "${app}/public/native-bridge.js"
+          test -f "${app}/PrivacyInfo.xcprivacy"
+          plutil -p "${app}/Info.plist" | tee "${RUNNER_TEMP}/info-plist.log"
+          grep -q 'com.hawwesh.app' "${RUNNER_TEMP}/info-plist.log"
+          grep -q 'NSFaceIDUsageDescription' "${RUNNER_TEMP}/info-plist.log"
+          ls "${app}/Frameworks" 2>/dev/null || true
+
+      - name: Launch in the simulator and take a screenshot (does not fail the build)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="${RUNNER_TEMP}/DerivedData/Build/Products/Debug-iphonesimulator/App.app"
+          device="$(xcrun simctl list devices available -j | jq -r '[.devices | to_entries[] | select(.key | test("iOS")) | .value[] | select(.name | test("^iPhone"))] | last | .udid')"
+          echo "Simulator: ${device}"
+          xcrun simctl boot "${device}"
+          xcrun simctl bootstatus "${device}" -b
+          xcrun simctl install "${device}" "${app}"
+          xcrun simctl launch "${device}" com.hawwesh.app
+          sleep 12
+          xcrun simctl io "${device}" screenshot "${RUNNER_TEMP}/launch.png"
+          xcrun simctl shutdown "${device}" || true
+
+      - name: Upload the build log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-build-log
+          path: |
+            ${{ runner.temp }}/xcodebuild.log
+            ${{ runner.temp }}/xcodebuild-list.log
+            ${{ runner.temp }}/info-plist.log
+            ${{ runner.temp }}/launch.png
+          if-no-files-found: warn
+          retention-days: 14

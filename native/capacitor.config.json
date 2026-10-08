@@ -1,0 +1,9 @@
+{
+  "appId": "com.hawwesh.app",
+  "appName": "حوّش",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "allowsLinkPreview": false
+  }
+}
