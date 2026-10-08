@@ -1,6 +1,9 @@
-// نشر تلقائي على Cloudflare Workers (ملفات ثابتة فقط) من مجلد dist
+// نشر تلقائي على Cloudflare Workers من مجلد dist (ملفات ثابتة) + صندوق استقبال الإشعارات (/api/*)
 {
   "name": "broken-queen-f0ed",
+  "main": "worker/index.js",
   "compatibility_date": "2026-10-01",
-  "assets": { "directory": "./dist" }
+  "assets": { "directory": "./dist" },
+  "durable_objects": { "bindings": [{ "name": "INBOX", "class_name": "Inbox" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Inbox"] }]
 }
