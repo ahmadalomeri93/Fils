@@ -418,6 +418,14 @@ export function costOf(usage, prices) {
 
 // ---- Workers AI: تحويل رسائلنا (شكل Anthropic) لشكل الدردشة العام (OpenAI) وردّه لشكلنا ----
 const NO_SEARCH_NOTE = `\n\nIMPORTANT FOR THIS DEPLOYMENT: there is no web_search tool here. For any public price or rate, say in Arabic that you cannot look it up now (do not guess a price). Use only the tools provided.`;
+// سؤال يحتاج معلومة من الإنترنت (سعر، سهم، ذهب، عملة، خبر)؟ يحدد متى نقول «ما أبحث بالإنترنت» بدل ما نكررها بكل رد
+const SEARCH_HINT = /سعر|أسعار|اسعار|سهم|أسهم|اسهم|بورصة|البورصة|ذهب|الذهب|دولار|عملة|العملات|خبر|أخبار|اخبار|ابحث|بحث|إنترنت|انترنت|price|stock|news|search|google|gold|rate/i;
+export function needsSearch(messages = []) {
+  const last = [...messages].reverse().find((m) => m?.role === "user" && (typeof m.content === "string" || (Array.isArray(m.content) && m.content.some((b) => b?.type === "text"))));
+  if (!last) return false;
+  const text = typeof last.content === "string" ? last.content : last.content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join(" ");
+  return SEARCH_HINT.test(text);
+}
 const textOf = (content) => (typeof content === "string" ? content : Array.isArray(content) ? content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n") : "");
 
 export function toWorkersAiMessages(messages) {

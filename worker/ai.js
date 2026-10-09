@@ -9,7 +9,7 @@
 // deps للاختبار والتشغيل: { fetch, now, sleep, timeoutMs, flags, waitUntil }. waitUntil (من ctx بنقطة الدخول) يبقي تحرير علامة الطلب
 // شغّالاً حتى لو انقطع الاتصال، وهو اختياري.
 import {
-  buildWorkersAiInput, parseWorkersAiReply,
+  buildWorkersAiInput, needsSearch, parseWorkersAiReply,
   AI_VERSION, AiError, DEVICE_PATTERN, MAX_CHAT_BYTES, MAX_PAIR_BYTES, MAX_UPSTREAM_BYTES, RETRY_DELAY_MS, UPSTREAM_TIMEOUT_MS, aiFlags, apiKeyOf, bearerToken, buildUpstream,
   costOf, errorBody, failureKind, hasThinking, isConfigured, mapUpstreamStatus, normalizeUsage, originAllowed, ownerCodeMatches, parseReply, readBodyCapped, readConfig,
   ownerCodeOf, pairFingerprint, round6, secretsOf, sha256Hex, signToken, stripThinking, validateMessages, verifyToken
@@ -213,7 +213,8 @@ async function callWorkersAi({ env, config, deps }, messages, signal) {
         note("bad_reply");
         throw Object.assign(new AiError(502, "upstream_error", "the AI service failed"), { usage: normalizeUsage({ input_tokens: result?.usage?.prompt_tokens, output_tokens: result?.usage?.completion_tokens }) });
       }
-      return { reply, warnings: ["search_unavailable"] };
+      // «ما أبحث بالإنترنت» تنقال فقط لما السؤال يحتاج إنترنت (سعر، سهم، خبر…)، مو بكل رد
+      return { reply, warnings: needsSearch(messages) ? ["search_unavailable"] : [] };
     }
   } finally { clearTimeout(timer); if (onAbort) signal.removeEventListener("abort", onAbort); }
 }

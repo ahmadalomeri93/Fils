@@ -50,6 +50,7 @@ import {
   debtProgress,
   debtSummary,
   endOfMonthForecast,
+  explainDailyBudget,
   financialFlow,
   generateFinancialAlerts,
   livingBaseline,
@@ -915,7 +916,7 @@ function renderDashboard() {
     setText("#daily-guidance", "أضف دخلك ورصيدك الحالي من الإعدادات حتى نحسب المتاح اليوم بدقة.");
   } else if (context.safe?.shortfallFils > 0 || dailyRemaining < 0) {
     setText("#daily-status", "يحتاج انتباه");
-    setText("#daily-guidance", `التزاماتك المحجوزة أعلى من المساحة الآمنة للصرف بـ ${formatMoney(Math.max(context.safe?.shortfallFils ?? 0, Math.abs(dailyRemaining)))}.`);
+    setText("#daily-guidance", explainDailyBudget({ safe: context.safe, cashFils: state.settings.cashFils, todaySpentFils: todaySpent, dailyRemainingFils: dailyRemaining }, formatMoney));
   } else {
     setText("#daily-status", "ضمن المسار");
     setText("#daily-guidance", `تقدر تصرف حتى ${formatMoney(Math.max(dailyRemaining, 0))} اليوم وتبقى التزاماتك محجوزة.`);

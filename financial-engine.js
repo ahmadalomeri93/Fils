@@ -371,6 +371,26 @@ export function safeToSpendEngine({
   };
 }
 
+/* شرح «ميزانيتك الآمنة اليوم» بنفس أرقام المحرك: المحجوز = أقساط + التزامات + دفعة البطاقة + هامش الأمان (بدون مستحقات يوم الراتب
+   لأن الراتب يغطيها)، فيكون المحجوز − الرصيد = العجز بالضبط. نعدّد الأجزاء غير الصفرية فقط. */
+export function explainDailyBudget({ safe, cashFils = 0, todaySpentFils = 0, dailyRemainingFils = 0 } = {}, format = (fils) => String(fils)) {
+  if (!safe) return "";
+  const parts = [];
+  if (safe.reservedCreditCardFils > 0) parts.push(`دفعة البطاقة ${format(safe.reservedCreditCardFils)}`);
+  if (safe.safetyBufferFils > 0) parts.push(`هامش الأمان ${format(safe.safetyBufferFils)}`);
+  if (safe.upcomingDebtPaymentsFils > 0) parts.push(`أقساط ${format(safe.upcomingDebtPaymentsFils)}`);
+  if (safe.upcomingCommitmentsFils > 0) parts.push(`التزامات ${format(safe.upcomingCommitmentsFils)}`);
+  const sentences = [];
+  if (safe.shortfallFils > 0) {
+    sentences.push(`المتاح اليوم صفر لأن المحجوز قبل الراتب ${format(safe.committedFils)}${parts.length ? ` (${parts.join("، ")})` : ""} أكثر من رصيدك المسجّل ${format(Math.max(cashFils, 0))} بـ ${format(safe.shortfallFils)}.`);
+    if (todaySpentFils > 0) sentences.push(`وصرفت اليوم ${format(todaySpentFils)}، فالمتبقي صار ${format(dailyRemainingFils)}.`);
+    sentences.push("إذا رصيدك أو دفعة البطاقة تغيّرت، حدّثهم من الإعدادات.");
+  } else {
+    sentences.push(`صرفت اليوم ${format(todaySpentFils)} والمتاح لك ${format(safe.dailySafeFils)}، فتجاوزت بـ ${format(Math.abs(dailyRemainingFils))}.`);
+  }
+  return sentences.join(" ");
+}
+
 function reviewedExpenses(transactions = []) {
   return transactions.filter((item) => item?.kind === "expense" && item?.reviewed !== false && validFils(item?.amountFils));
 }
