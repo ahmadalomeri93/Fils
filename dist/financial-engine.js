@@ -116,6 +116,17 @@ export function recentInstallmentPayment(payments = [], debtId, todayISO, dueDat
     (sameDueMonth(payment?.dueDate, todayISO) || sameDueMonth(payment?.paidAt, todayISO))) ?? null;
 }
 
+/* حالة استحقاق التزام: دفعة كاملة (أي دفعة بدون partial) = مدفوع. الدفعات الجزئية تنجمع،
+   والمتبقي يظل محجوز (amountFils للاستحقاق = المتبقي)، فكل الحسابات اللي تجمع غير المدفوع تحجز الباقي بس. */
+function commitmentOccurrence(commitment, dueDate, payments) {
+  const own = payments.filter((payment) => payment?.commitmentId === commitment.id && sameDueMonth(payment?.dueDate, dueDate) && payment?.status !== "reversed");
+  if (own.some((payment) => payment?.partial !== true)) return { ...commitment, commitmentId: commitment.id, dueDate, paid: true };
+  const partialFils = own.reduce((sum, payment) => sum + (validFils(payment?.amountFils) ? payment.amountFils : 0), 0);
+  if (partialFils <= 0) return { ...commitment, commitmentId: commitment.id, dueDate, paid: false };
+  const remainingFils = Math.max(commitment.amountFils - partialFils, 0);
+  return { ...commitment, commitmentId: commitment.id, dueDate, paid: remainingFils === 0, amountFils: remainingFils, fullAmountFils: commitment.amountFils, partialPaidFils: partialFils };
+}
+
 export function commitmentOccurrences(commitments = [], { fromISO, toISO, payments = [], includePaused = false } = {}) {
   const from = parseISO(fromISO);
   const to = parseISO(toISO);
@@ -130,7 +141,7 @@ export function commitmentOccurrences(commitments = [], { fromISO, toISO, paymen
     if (commitment.recurrence === "once") {
       if (anchor >= from && anchor <= to) {
         const dueDate = toISODate(anchor);
-        results.push({ ...commitment, commitmentId: commitment.id, dueDate, paid: occurrencePaid(payments, "commitmentId", commitment.id, dueDate) });
+        results.push(commitmentOccurrence(commitment, dueDate, payments));
       }
       continue;
     }
@@ -142,7 +153,7 @@ export function commitmentOccurrences(commitments = [], { fromISO, toISO, paymen
       if (!due) break;
       if (due > to) break;
       if (due < from) continue;
-      results.push({ ...commitment, commitmentId: commitment.id, dueDate, paid: occurrencePaid(payments, "commitmentId", commitment.id, dueDate) });
+      results.push(commitmentOccurrence(commitment, dueDate, payments));
     }
   }
   return results.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
