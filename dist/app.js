@@ -915,7 +915,13 @@ function renderDashboard() {
     setText("#daily-guidance", "أضف دخلك ورصيدك الحالي من الإعدادات حتى نحسب المتاح اليوم بدقة.");
   } else if (context.safe?.shortfallFils > 0 || dailyRemaining < 0) {
     setText("#daily-status", "يحتاج انتباه");
-    setText("#daily-guidance", `التزاماتك المحجوزة أعلى من المساحة الآمنة للصرف بـ ${formatMoney(Math.max(context.safe?.shortfallFils ?? 0, Math.abs(dailyRemaining)))}.`);
+    // نشرح الرقم السالب بالأرقام نفسها: وش محجوز قبل الراتب، وكم رصيدك، وكم صرفت اليوم
+    const reservedFils = (context.safe?.upcomingDebtPaymentsFils ?? 0) + (context.safe?.upcomingCommitmentsFils ?? 0) + (context.safe?.reservedCreditCardFils ?? 0) + (context.safe?.paydayDueFils ?? 0) + state.settings.safetyBufferFils;
+    const parts = [];
+    if (context.safe?.shortfallFils > 0) parts.push(`المتاح اليوم صفر لأن المحجوز قبل الراتب (أقساط والتزامات واحتياطي) ${formatMoney(reservedFils)} أكثر من رصيدك المسجّل ${formatMoney(state.settings.cashFils)} بـ ${formatMoney(context.safe.shortfallFils)}.`);
+    if (todaySpent > 0) parts.push(`وصرفت اليوم ${formatMoney(todaySpent)}، فالمتبقي صار ${formatMoney(dailyRemaining)}.`);
+    parts.push("إذا رصيدك تغيّر، حدّثه من الإعدادات.");
+    setText("#daily-guidance", parts.join(" "));
   } else {
     setText("#daily-status", "ضمن المسار");
     setText("#daily-guidance", `تقدر تصرف حتى ${formatMoney(Math.max(dailyRemaining, 0))} اليوم وتبقى التزاماتك محجوزة.`);
