@@ -80,6 +80,8 @@ const ACCOUNT_WORD = /^(?:ال)?حساب|^(?:your\s+)?(?:other\s+)?account\b/i;
 const OWN_WORD = /^حسابك|^your\s+(?:other\s+)?account/i;
 const FROM_ACCOUNT_DIGITS = /(?:^|\s)(?:من|from)\s+(?:your\s+)?(?:(?:ال)?حساب(?:ك)?|account)\s*(?:رقم\s+|no\.?\s*|number\s*|#)?([\d*xX•]{3,24})(?![\d*])/i;
 const TO_ACCOUNT_DIGITS = /(?:^|\s)(?:إلى|الى|to)\s+(?:your\s+)?(?:(?:ال)?حساب(?:ك)?|account)\s*(?:رقم\s+|no\.?\s*|number\s*|#)?([\d*xX•]{3,24})(?![\d*])/i;
+const INCOMING_MARK = /incoming|received|واردة?\b|وصلك|استلام|استلمت/i;
+const TRANSFER_TO_CARD = /(?:إلى|الى|\bto\b)\s+(?:your\s+)?(?:بطاقت\S*|بطاقة|(?:credit\s+)?card\b)/i;
 const BALANCE_ACCOUNT = /ل?حساب(?:ك)?\s+(?:رقم\s+)?([\d*xX•]{4,24})(?![\d*])\s+(?:هو|:)/;
 
 const MONTHS = {
@@ -183,14 +185,14 @@ const lastDigits = (token) => (String(token ?? "").match(/(\d+)(?!.*\d)/)?.[1] ?
 function analyzeTransfer(text, type) {
   const to = text.match(/(?:\bto\b|إلى|الى)\s*[:\-]?\s+(.+)/i);
   const from = text.match(/(?:^|\s)(?:from|من)\s*[:\-]?\s+(.+)/i);
-  const partyOf = (match) => (match ? cleanMerchant(match[1].split(/\s+(?:to|إلى|الى)\s/i)[0]) : "");
+  const partyOf = (match) => (match ? cleanMerchant(match[1].split(/\s+(?:to|إلى|الى)\s/i)[0].split(/\s+(?:من|from)\s+(?:your\s+)?(?:ال)?(?:حساب|account)/i)[0]) : "");
   const outParty = type === "transfer_out" ? partyOf(to) : "";
   const inParty = type === "transfer_in" ? partyOf(from) : "";
   const fromAcc = text.match(FROM_ACCOUNT_DIGITS);
   const toAcc = text.match(TO_ACCOUNT_DIGITS);
   const party = outParty || inParty;
   const own = OWN_BETWEEN.test(text) || OWN_TO_OWN.test(text) || OWN_WORD.test(party)
-    || (type === "transfer_in" && !party && !fromAcc && TO_YOUR_ACCOUNT.test(text));
+    || (type === "transfer_in" && !party && !fromAcc && TO_YOUR_ACCOUNT.test(text) && !INCOMING_MARK.test(text));
   return { own, fromAccount: lastDigits(fromAcc?.[1]), toAccount: lastDigits(toAcc?.[1]), person: ACCOUNT_WORD.test(party) ? (party.match(/باسم\s+(.+)/)?.[1] ?? "") : party };
 }
 
@@ -211,8 +213,10 @@ export function parseBankNotification(raw, { todayISO, fieldOrder = DEFAULT_FIEL
   else   if (has(lower, REFUND)) type = "refund";
   else if (has(lower, WITHDRAWAL)) type = "withdrawal";
   else if (has(lower, SALARY)) type = "salary";
+  else if (has(lower, TRANSFER) && TRANSFER_TO_CARD.test(text)) return { ...base, type: "card_payment", ignored: true, reason: "card_payment" };
   else if (has(lower, TRANSFER)) {
-    const out = has(lower, TRANSFER_OUT) || TRANSFER_TO_OTHER.test(text);
+    const toYouOnly = TO_YOUR_ACCOUNT.test(text) && !/من\s+حسابك|from\s+your\s+account/i.test(text);
+    const out = (has(lower, TRANSFER_OUT) && !toYouOnly) || TRANSFER_TO_OTHER.test(text);
     type = has(lower, TRANSFER_IN) && !out ? "transfer_in" : out || (!has(lower, TRANSFER_IN) && FROM_ACCOUNT_NUMBER.test(text)) || OWN_BETWEEN.test(text) ? "transfer_out" : "unknown";
   }
   else if (has(lower, DEPOSIT)) type = "deposit";
@@ -232,7 +236,7 @@ export function parseBankNotification(raw, { todayISO, fieldOrder = DEFAULT_FIEL
     timeMatch[1] = String(hour);
   }
   // آخر ٤ أرقام من آخر الرقم (المخفي مثل 3678******443995 آخره 3995)، ونفرّق بين البطاقة والحساب
-  const accountMatch = text.match(/(?:(?:من|إلى|الى|على)\s+|(?:^|\s)ل)حساب(?:ك)?\s+(?:رقم\s+)?([\d*xX•]{4,24})(?![\d*])/);
+  const accountMatch = text.match(/(?:(?:من|إلى|الى|على)\s+حساب(?:ك)?|(?:^|\s)لحسابك)\s+(?:رقم\s+)?([\d*xX•]{4,24})(?![\d*])/);
   const cardDigits = text.match(/(?:بطاقة|بطاقتك|card|visa|mastercard|ماستر)[^\d\n]{0,20}([\d*xX•]{4,24})(?![\d*])/i) ?? text.match(/[*xX•]{2,}\s*(\d{4})(?!\d)/);
   const cardMatch = cardDigits ?? accountMatch;
   const cardKind = cardDigits ? "card" : accountMatch ? "account" : "";
@@ -254,7 +258,7 @@ export function parseBankNotification(raw, { todayISO, fieldOrder = DEFAULT_FIEL
     const t = analyzeTransfer(withoutBalance, type);
     const mine = type === "transfer_out" ? t.fromAccount : t.toAccount;
     const other = type === "transfer_out" ? t.toAccount : t.fromAccount;
-    Object.assign(result, { fromAccount: t.fromAccount, toAccount: t.toAccount, ownTransfer: t.own });
+    Object.assign(result, { fromAccount: t.fromAccount, toAccount: t.toAccount, ownTransfer: t.own, transferParty: t.person });
     // حسابك أنت = الطرف اللي وصله الإشعار (المصدر بالصادر، الوجهة بالوارد). ما نخلّي رقم حساب الطرف الثاني يطلع كأنه حسابك.
     const fallback = lastDigits(text.match(BALANCE_ACCOUNT)?.[1]);
     const account = mine ?? (result.cardLast4 && result.cardLast4 !== other ? result.cardLast4 : fallback);
@@ -468,6 +472,7 @@ export const NOTIFICATION_REASONS = {
 export function isOwnTransfer(notification, ownAccounts = []) {
   if (!notification || (notification.type !== "transfer_out" && notification.type !== "transfer_in")) return false;
   if (notification.ownTransfer) return true;
+  if (notification.transferParty) return false;
   const mine = notification.type === "transfer_out" ? notification.fromAccount : notification.toAccount;
   const other = notification.type === "transfer_out" ? notification.toAccount : notification.fromAccount;
   return Boolean(other && other !== mine && new Set(ownAccounts).has(other));
