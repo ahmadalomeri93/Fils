@@ -666,7 +666,8 @@ function ingestBankText(raw, { fromFile = false, dateOverrideISO = "" } = {}) {
 // تحويل بين حساباتك ما ينسجّل: نقارن الطرف الثاني بحساباتك اللي عرفناها من إشعاراتك السابقة.
 function withOwnTransferRule(notification) {
   if (notification.ignored || notification.needsManual) return notification;
-  const accounts = state.transactions.filter((item) => item.cardKind === "account" && item.cardLast4).map((item) => item.cardLast4);
+  // المصروفات فقط: حساب المصروف هو حسابك أنت، أما الدخل القديم فقد يحمل رقم حساب المرسل
+  const accounts = state.transactions.filter((item) => item.kind === "expense" && item.cardKind === "account" && item.cardLast4).map((item) => item.cardLast4);
   return isOwnTransfer(notification, accounts) ? { ...notification, ignored: true, reason: "own_transfer" } : notification;
 }
 
