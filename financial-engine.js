@@ -116,6 +116,19 @@ export function recentInstallmentPayment(payments = [], debtId, todayISO, dueDat
     (sameDueMonth(payment?.dueDate, todayISO) || sameDueMonth(payment?.paidAt, todayISO))) ?? null;
 }
 
+/* حالة استحقاق التزام: دفعة كاملة (أي دفعة بدون partial) = مدفوع. الدفعات الجزئية تنجمع،
+   والمتبقي يظل محجوز (amountFils للاستحقاق = المتبقي)، فكل الحسابات اللي تجمع غير المدفوع تحجز الباقي بس. */
+function commitmentOccurrence(commitment, dueDate, payments) {
+  const own = payments.filter((payment) => payment?.commitmentId === commitment.id && sameDueMonth(payment?.dueDate, dueDate) && payment?.status !== "reversed");
+  if (own.some((payment) => payment?.partial !== true)) return { ...commitment, commitmentId: commitment.id, dueDate, paid: true };
+  const partialFils = own.reduce((sum, payment) => sum + (validFils(payment?.amountFils) ? payment.amountFils : 0), 0);
+  if (partialFils <= 0) return { ...commitment, commitmentId: commitment.id, dueDate, paid: false };
+  const remainingFils = Math.max(commitment.amountFils - partialFils, 0);
+  // اكتمل بمجموع الدفعات: يبقى مبلغه كامل (مدفوع)؛ غير مكتمل: amountFils هو الباقي بس
+  if (remainingFils === 0) return { ...commitment, commitmentId: commitment.id, dueDate, paid: true, partialPaidFils: partialFils };
+  return { ...commitment, commitmentId: commitment.id, dueDate, paid: false, amountFils: remainingFils, fullAmountFils: commitment.amountFils, partialPaidFils: partialFils };
+}
+
 export function commitmentOccurrences(commitments = [], { fromISO, toISO, payments = [], includePaused = false } = {}) {
   const from = parseISO(fromISO);
   const to = parseISO(toISO);
@@ -130,7 +143,7 @@ export function commitmentOccurrences(commitments = [], { fromISO, toISO, paymen
     if (commitment.recurrence === "once") {
       if (anchor >= from && anchor <= to) {
         const dueDate = toISODate(anchor);
-        results.push({ ...commitment, commitmentId: commitment.id, dueDate, paid: occurrencePaid(payments, "commitmentId", commitment.id, dueDate) });
+        results.push(commitmentOccurrence(commitment, dueDate, payments));
       }
       continue;
     }
@@ -142,7 +155,7 @@ export function commitmentOccurrences(commitments = [], { fromISO, toISO, paymen
       if (!due) break;
       if (due > to) break;
       if (due < from) continue;
-      results.push({ ...commitment, commitmentId: commitment.id, dueDate, paid: occurrencePaid(payments, "commitmentId", commitment.id, dueDate) });
+      results.push(commitmentOccurrence(commitment, dueDate, payments));
     }
   }
   return results.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
@@ -178,7 +191,7 @@ export function commitmentSummary(commitments = [], payments = [], todayISO) {
   const overdue = occurrences.filter((item) => !item.paid && item.dueDate < todayISO);
   return {
     monthlyEquivalentFils,
-    dueThisMonthFils: occurrences.reduce((sum, item) => sum + item.amountFils, 0),
+    dueThisMonthFils: occurrences.reduce((sum, item) => sum + (item.fullAmountFils ?? item.amountFils), 0),
     paidThisMonthFils: commitmentPaidThisMonth(commitments, payments, todayISO),
     remainingThisMonthFils: occurrences.filter((item) => !item.paid).reduce((sum, item) => sum + item.amountFils, 0),
     dueThisMonth: occurrences,
@@ -369,6 +382,26 @@ export function safeToSpendEngine({
     debtDue,
     commitmentDue
   };
+}
+
+/* شرح «ميزانيتك الآمنة اليوم» بنفس أرقام المحرك: المحجوز = أقساط + التزامات + دفعة البطاقة + هامش الأمان (بدون مستحقات يوم الراتب
+   لأن الراتب يغطيها)، فيكون المحجوز − الرصيد = العجز بالضبط. نعدّد الأجزاء غير الصفرية فقط. */
+export function explainDailyBudget({ safe, cashFils = 0, todaySpentFils = 0, dailyRemainingFils = 0 } = {}, format = (fils) => String(fils)) {
+  if (!safe) return "";
+  const parts = [];
+  if (safe.reservedCreditCardFils > 0) parts.push(`دفعة البطاقة ${format(safe.reservedCreditCardFils)}`);
+  if (safe.safetyBufferFils > 0) parts.push(`هامش الأمان ${format(safe.safetyBufferFils)}`);
+  if (safe.upcomingDebtPaymentsFils > 0) parts.push(`أقساط ${format(safe.upcomingDebtPaymentsFils)}`);
+  if (safe.upcomingCommitmentsFils > 0) parts.push(`التزامات ${format(safe.upcomingCommitmentsFils)}`);
+  const sentences = [];
+  if (safe.shortfallFils > 0) {
+    sentences.push(`المتاح اليوم صفر لأن المحجوز قبل الراتب ${format(safe.committedFils)}${parts.length ? ` (${parts.join("، ")})` : ""} أكثر من رصيدك المسجّل ${format(Math.max(cashFils, 0))} بـ ${format(safe.shortfallFils)}.`);
+    if (todaySpentFils > 0) sentences.push(`وصرفت اليوم ${format(todaySpentFils)}، فالمتبقي صار ${format(dailyRemainingFils)}.`);
+    sentences.push("إذا رصيدك أو دفعة البطاقة تغيّرت، حدّثهم من الإعدادات.");
+  } else {
+    sentences.push(`صرفت اليوم ${format(todaySpentFils)} والمتاح لك ${format(safe.dailySafeFils)}، فتجاوزت بـ ${format(Math.abs(dailyRemainingFils))}.`);
+  }
+  return sentences.join(" ");
 }
 
 function reviewedExpenses(transactions = []) {

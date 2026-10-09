@@ -316,7 +316,10 @@ export function mountAssistant(root, hooks) {
           const check = display.text ? checkNumbers(display.text, buildEvidence(S.messages)) : { unmatched: [] };
           S.thread.push({ kind: "assistant", ...display, unmatched: check.unmatched, fetchedAt: display.usedSearch ? formatFetchedAt(result.fetchedAt) : "" });
         }
-        if (Array.isArray(result.warnings) && result.warnings.includes("search_unavailable") && !S.thread.some((item) => item.kind === "notice" && item.text.startsWith("البحث في الإنترنت غير متاح"))) S.thread.push({ kind: "notice", text: "البحث في الإنترنت غير متاح حالياً، فالرد من بياناتك فقط.", warn: true });
+        if (Array.isArray(result.warnings) && result.warnings.includes("search_unavailable") && !S.thread.some((item) => item.kind === "notice" && item.search)) {
+          const free = S.provider === "workers-ai";
+          S.thread.push({ kind: "notice", search: true, warn: !free, text: free ? "المحاسب هنا يجاوب من بياناتك فقط وما يبحث بالإنترنت، فلا تعتمد عليه بالأسعار." : "البحث في الإنترنت غير متاح حالياً، فالرد من بياناتك فقط." });
+        }
         const calls = reply.content.filter((block) => block?.type === "tool_use");
         if (reply.stop_reason === "tool_use" && calls.length) {
           S.busyLabel = calls.some((block) => AI_WRITE_TOOL_NAMES.has(block.name)) ? "أجهّز الاقتراح" : (STEP_LABELS[calls[0].name] ?? "أراجع بياناتك");

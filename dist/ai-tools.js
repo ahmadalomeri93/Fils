@@ -103,7 +103,7 @@ function toolOverview(ctx) {
   const horizon = addDaysISO(todayISO, 14);
   const upcoming = [
     ...commitmentOccurrences(state.monthlyCommitments, { fromISO: bounds.startISO, toISO: horizon, payments: state.commitmentPayments })
-      .filter((item) => !item.paid).map((item) => ({ type: "obligation", id: item.commitmentId, name: cleanText(item.name, 60), dueDate: item.dueDate, amount: money(item.amountFils) })),
+      .filter((item) => !item.paid).map((item) => ({ type: "obligation", id: item.commitmentId, name: cleanText(item.name, 60), dueDate: item.dueDate, amount: money(item.amountFils), ...(item.partialPaidFils ? { partiallyPaid: true, note: "المبلغ هو الباقي بعد دفعة جزئية" } : {}) })),
     ...debtOccurrences(state.loans.filter((loan) => ["active", "overdue"].includes(loan.status)), { fromISO: bounds.startISO, toISO: horizon, payments: state.debtPayments })
       .filter((item) => !item.paid).map((item) => ({ type: "debt_installment", id: item.debtId ?? item.id, name: cleanText(item.name, 60), dueDate: item.dueDate, amount: money(item.installmentFils) }))
   ].sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 15);
@@ -187,7 +187,7 @@ function toolListObligations(ctx) {
       id: item.id, name: cleanText(item.name, 80), category: cleanText(item.category, 60), amount: money(item.amountFils),
       recurrence: item.recurrence, recurrenceLabel: commitmentRecurrences[item.recurrence], dueDay: Number(String(item.dueDate).slice(8, 10)),
       status: item.status, paymentMethod: PAYMENT_METHOD_LABELS[item.paymentMethod] ?? PAYMENT_METHOD_LABELS.other,
-      currentMonthOccurrence: current ? { dueDate: current.dueDate, paid: current.paid } : null,
+      currentMonthOccurrence: current ? { dueDate: current.dueDate, paid: current.paid, ...(current.partialPaidFils ? { paidSoFar: money(current.partialPaidFils), remaining: money(current.paid ? 0 : current.amountFils) } : {}) } : null,
       nextUnpaidDueDate: next?.dueDate ?? null
     };
   });
@@ -542,6 +542,11 @@ function buildMarkPaid(input, ctx) {
   }
   const existingIndex = ctx.state.commitmentPayments.findIndex((item) => item.commitmentId === commitment.id && sameDueMonth(item.dueDate, occurrence.dueDate) && item.status !== "reversed");
   const base = { commitmentId: commitment.id, dueDate: occurrence.dueDate, amountFils: commitment.amountFils, name: cleanText(commitment.name, 60) };
+  // الدفع الجزئي (من صفحة الالتزامات) أدق يدوياً: ما أسجل ولا ألغي فوق دفعات جزئية
+  if (ctx.state.commitmentPayments.some((item) => item.commitmentId === commitment.id && sameDueMonth(item.dueDate, occurrence.dueDate) && item.status !== "reversed" && item.partial === true)) {
+    const part = occurrence.partialPaidFils ?? 0;
+    return fail("partial_payments", `هذا الاستحقاق فيه دفعات جزئية (مدفوع ${formatMoney(part)} من ${formatMoney(commitment.amountFils)}). سجّل الباقي أو تراجع عنه من صفحة الالتزامات بنفسك.`);
+  }
   if (paid) {
     if (existingIndex >= 0) return fail("already_paid", "هذا الاستحقاق مسجل كمدفوع من قبل");
     if (commitment.status !== "active") return fail("unsupported", "الالتزام موقوف أو مكتمل، ما أقدر أسجل عليه دفعة");

@@ -852,9 +852,9 @@ h1, h2, h3 { letter-spacing: 0; }
 /* ===== إصلاحات 7 أكتوبر 2026 ===== */
 
 /* F34: النوافذ اللي ما فيها <form> كانت بحشو صفر، فالعنوان والأزرار يلزقون بالحافة */
-#more-dialog, #confirm-dialog, #portfolio-import-dialog, #onboarding-dialog { padding: 21px; }
+#more-dialog, #confirm-dialog, #pay-dialog, #portfolio-import-dialog, #onboarding-dialog { padding: 21px; }
 /* الـ grid للمفتوحة بس: على المقفلة كان يلغي display:none فتطلع النافذتان آخر كل صفحة */
-#confirm-dialog[open], #portfolio-import-dialog[open] { display: grid; gap: 14px; }
+#confirm-dialog[open], #pay-dialog[open], #portfolio-import-dialog[open] { display: grid; gap: 14px; }
 
 /* F58: أي زر يلمسه الإصبع يصير 44 نقطة على الأقل (توصية آبل) */
 .primary, .secondary, .danger, .ghost { min-height: 44px; }
@@ -1063,3 +1063,8 @@ dialog.native-doc-dialog { width: min(calc(100% - 16px), 720px); max-height: 92v
 .home-start h2 { margin: 0; font-size: 1.1rem; }
 .home-start p { margin: 0; color: var(--muted); line-height: 1.7; }
 .home-start .primary { min-height: 48px; }
+
+/* «تم الدفع»: كامل أو جزء */
+.pay-options { display: grid; gap: 10px; }
+.pay-options .primary, .pay-options .secondary, .pay-options .ghost { min-height: 48px; }
+.pay-options .ghost { border: 1px solid var(--line); background: var(--card); }
