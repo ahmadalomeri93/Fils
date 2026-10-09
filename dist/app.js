@@ -916,9 +916,16 @@ function renderDashboard() {
   } else if (context.safe?.shortfallFils > 0 || dailyRemaining < 0) {
     setText("#daily-status", "يحتاج انتباه");
     // نشرح الرقم السالب بالأرقام نفسها: وش محجوز قبل الراتب، وكم رصيدك، وكم صرفت اليوم
-    const reservedFils = (context.safe?.upcomingDebtPaymentsFils ?? 0) + (context.safe?.upcomingCommitmentsFils ?? 0) + (context.safe?.reservedCreditCardFils ?? 0) + (context.safe?.paydayDueFils ?? 0) + state.settings.safetyBufferFils;
+    // اللي يستحق يوم الراتب ينّدفع من الراتب نفسه، فما يدخل بالعجز؛ المحجوز من رصيدك الحالي بس هذولي
+    const pieces = [
+      ["أقساط", context.safe?.upcomingDebtPaymentsFils ?? 0],
+      ["التزامات", context.safe?.upcomingCommitmentsFils ?? 0],
+      ["حجز البطاقة الائتمانية", context.safe?.reservedCreditCardFils ?? 0],
+      ["احتياطي الأمان", state.settings.safetyBufferFils]
+    ].filter(([, fils]) => fils > 0);
+    const reservedFils = pieces.reduce((sum, [, fils]) => sum + fils, 0);
     const parts = [];
-    if (context.safe?.shortfallFils > 0) parts.push(`المتاح اليوم صفر لأن المحجوز قبل الراتب (أقساط والتزامات واحتياطي) ${formatMoney(reservedFils)} أكثر من رصيدك المسجّل ${formatMoney(state.settings.cashFils)} بـ ${formatMoney(context.safe.shortfallFils)}.`);
+    if (context.safe?.shortfallFils > 0) parts.push(`المتاح اليوم صفر لأن المحجوز قبل الراتب ${formatMoney(reservedFils)} (${pieces.map(([label, fils]) => `${label} ${formatMoney(fils)}`).join("، ")}) أكثر من رصيدك المسجّل ${formatMoney(state.settings.cashFils)} بـ ${formatMoney(context.safe.shortfallFils)}.`);
     if (todaySpent > 0) parts.push(`وصرفت اليوم ${formatMoney(todaySpent)}، فالمتبقي صار ${formatMoney(dailyRemaining)}.`);
     parts.push("إذا رصيدك تغيّر، حدّثه من الإعدادات.");
     setText("#daily-guidance", parts.join(" "));
