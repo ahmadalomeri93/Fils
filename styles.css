@@ -243,7 +243,8 @@ main { width: min(100%, 1040px); margin: 0 auto; padding: 22px 18px calc(110px +
 .transaction-icon.income { color: var(--c-ok-ink); background: var(--c-ok-soft); }
 .transaction-main { min-width: 0; flex: 1; }
 .transaction-main strong, .transaction-main small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.transaction-main small { margin-top: 4px; color: var(--muted); }
+.transaction-main small { margin-top: 4px; color: var(--muted); white-space: normal; overflow: visible; }
+.meta-keep { white-space: nowrap; }
 .transaction-amount { text-align: left; font-weight: 850; color: var(--danger); white-space: nowrap; }
 .transaction-amount.income { color: var(--c-ok-ink); }
 .pending-badge { display: inline-block; margin-top: 5px; padding: 3px 7px; border-radius: 999px; color: var(--warning); background: var(--c-warn-soft); font-size: .68rem; }
@@ -982,6 +983,7 @@ dialog.native-doc-dialog { width: min(calc(100% - 16px), 720px); max-height: 92v
 #inbox-dialog form > * + *, #inbox-off > * + *, #inbox-on > * + * { margin-top: 12px; }
 #inbox-dialog code { direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
 #inbox-dialog .hint { margin-bottom: 0; }
+#transaction-time-note { margin: -6px 0 0; }
 #inbox-dialog .inbox-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 #inbox-dialog .inbox-actions > * { min-height: 48px; margin: 0; }
 #inbox-dialog #inbox-enable { width: 100%; min-height: 48px; }

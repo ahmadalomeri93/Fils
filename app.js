@@ -7,7 +7,7 @@ import { PIN_PATTERN, backupStatus, createLockRecord, cryptoAvailable, describeB
   remainingLockMs, sanitizeLockRecord, shouldRelock, verifyPin } from "./safety.js";
 import { GOLD_PRICE_URL, goldSummary, mountGold, priceFromApi, sanitizeGold } from "./gold.js";
 import { decideUpdate, installedVersion, remoteVersion, staticCacheNames, versionLabel } from "./app-update.js";
-import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, notificationFingerprints, parseBankNotification, splitBankMessages, splitStamp, BANK_FIELDS, DEFAULT_FIELD_ORDER } from "./bank-notifications.js";
+import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, notificationFingerprints, parseBankNotification, splitBankMessages, splitStamp, timeFromCompact, BANK_FIELDS, DEFAULT_FIELD_ORDER } from "./bank-notifications.js";
 import { parsePortfolioLink, newPortfolioHoldings } from "./portfolio-import.js";
 import { INBOX_BASE, ackInbox, agoLabel, claimInbox, fetchInbox, inboxErrorMessage, inboxLink, itemsToBankText, newInboxKey, parseInboxKey, readInboxConfig, unclaimInbox, writeInboxConfig } from "./inbox.js";
 import {
@@ -129,6 +129,8 @@ function validDate(value) {
 }
 
 function optionalDate(value) { return validDate(value) ? value : ""; }
+function validTime(value) { return typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value); }
+function optionalTime(value) { return validTime(value) ? value : ""; }
 function optionalInteger(value, minimum = 0, maximum = 1_000_000) {
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum ? value : null;
 }
@@ -163,6 +165,8 @@ function sanitizeState(raw) {
     kind: item?.kind === "income" ? "income" : "expense",
     // تاريخ غير صالح ما يصير «اليوم» بالصمت: السجل يُرفض ويُحتسب في تقرير الاستيراد (F39)
     date: validDate(item?.date) ? item.date : "",
+    // وقت العملية «HH:mm» لو وصل من إشعار فيه وقت (المسجّل قبل v43 بلا وقت)
+    time: optionalTime(item?.time),
     reviewed: item?.reviewed !== false,
     source: ["bank-text", "bank-statement"].includes(item?.source) ? item.source : "manual",
     rawMerchant: typeof item?.rawMerchant === "string" ? item.rawMerchant.trim().slice(0, 80) : "",
@@ -252,6 +256,7 @@ function sanitizeState(raw) {
     foreignCurrency: /^[A-Za-z]{3}$/.test(item?.foreignCurrency ?? "") ? item.foreignCurrency.toUpperCase() : "",
     foreignAmount: typeof item?.foreignAmount === "string" ? item.foreignAmount.slice(0, 24) : "",
     dateISO: optionalDate(item?.dateISO),
+    time: optionalTime(item?.time),
     createdAt: typeof item?.createdAt === "string" ? item.createdAt.slice(0, 40) : new Date().toISOString()
   })).filter((item) => item.raw) : [];
 
@@ -423,6 +428,18 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? value : dateFormatter.format(date);
 }
 
+const timeFormatter = new Intl.DateTimeFormat("ar-KW-u-nu-latn", { hour: "numeric", minute: "2-digit" });
+// «2:35 م» من «14:35»؛ نص فاضي لو الوقت غير موجود أو غير صالح
+function formatTime(value) {
+  if (!validTime(value)) return "";
+  return timeFormatter.format(new Date(`2000-01-01T${value}:00`));
+}
+// التاريخ ومعه الوقت لو معروف: «9 أكتوبر 2026 · 2:35 م»
+function formatDateTime(dateISO, time) {
+  const clock = formatTime(time);
+  return clock ? `${formatDate(dateISO)} · ${clock}` : formatDate(dateISO);
+}
+
 function formatStockTimestamp(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "غير مسجل" : stockDateTimeFormatter.format(date);
@@ -550,7 +567,7 @@ function queueNotification(notification) {
   if (found.duplicate) return { status: "duplicate", record: found.duplicate };
   const record = {
     id: createId(), amountFils: notification.amountFils, merchant: learned.merchant, rawMerchant: learned.rawMerchant,
-    category: learned.category, kind: notification.kind, date: notification.dateISO, reviewed: false, source: "bank-text",
+    category: learned.category, kind: notification.kind, date: notification.dateISO, time: optionalTime(notification.timeHM), reviewed: false, source: "bank-text",
     fingerprint: fingerprints.full, notifBalanceFils: notification.balanceFils, cardLast4: notification.cardLast4 ?? "",
     cardKind: notification.cardKind ?? "",
     possibleDuplicate: found.possibleDuplicate === true, createdAt: new Date().toISOString()
@@ -576,12 +593,23 @@ function looksFinancial(raw) {
   return /\d/.test(text) && /(?:KWD|KD|د\.ك|دينار|USD|EUR|GBP|AED|SAR|\b[A-Z]{3}\b)/i.test(text);
 }
 
+// وقت الإشعار «HH:mm»: من سطر الطابع (وقت وصوله على جوالك)، وإلا من وقت مكتوب بنص الإشعار نفسه.
+// ما نخترع وقتاً: رسالة ملصوقة بلا طابع ولا وقت بنصها تبقى بلا وقت. ولو التاريخ المحفوظ غير تاريخ الطابع
+// (اخترت تاريخاً ثانياً، أو الطابع بالمستقبل) وقت الطابع ما ينطبق عليه. وإذا نص الإشعار فيه تاريخ ثاني
+// (رسالة وصلت متأخرة أو عبر منتصف الليل) نأخذ وقته من نصه هو، ولو ما فيه وقت يبقى بلا وقت.
+function notificationClock(notification, stampISO, stampTime, usedStamp) {
+  const stampDateUsed = Boolean(stampISO) && usedStamp === stampISO && usedStamp <= todayISO();
+  if (stampISO && !stampDateUsed) return "";
+  if (stampISO && notification.dateISO !== stampISO) return timeFromCompact(notification.time);
+  return stampTime || timeFromCompact(notification.time);
+}
+
 function draftFromNotification(notification, stampISO) {
   return {
     id: createId(), raw: String(notification.raw ?? "").slice(0, 1_000), reason: notification.reason ?? "unrecognized",
     merchant: notification.rawMerchant || notification.merchant || "",
     foreignCurrency: notification.foreign?.currency ?? "", foreignAmount: notification.foreign?.amount ?? "",
-    dateISO: stampISO || "", createdAt: new Date().toISOString()
+    dateISO: stampISO || "", time: stampISO ? optionalTime(notification.timeHM) : "", createdAt: new Date().toISOString()
   };
 }
 
@@ -594,7 +622,7 @@ function ingestBankText(raw, { fromFile = false, dateOverrideISO = "" } = {}) {
   const read = [];
   const batch = new Set();
   for (const message of messages) {
-    const { stampISO, body } = splitStamp(message);
+    const { stampISO, stampTime, body } = splitStamp(message);
     // نفس الإشعار بنفس الطابع وبنفس الوقت مرتين بالملف (الاختصار اشتغل مرتين) = إشعار واحد.
     // بدون وقت بالطابع ما نحكم، لأن شراءين حقيقيين بنفس المبلغ ممكنين (F8).
     const hash = bankMessageHash(message);
@@ -604,6 +632,7 @@ function ingestBankText(raw, { fromFile = false, dateOverrideISO = "" } = {}) {
     batch.add(hash);
     const stamp = dateOverrideISO && validDate(dateOverrideISO) && dateOverrideISO <= today ? dateOverrideISO : stampISO;
     const notification = parseBankNotification(body, { todayISO: stamp && stamp <= today ? stamp : today, fieldOrder: state.ui.bankFieldOrder });
+    notification.timeHM = notificationClock(notification, stampISO, stampTime, stamp);
     if (notification.ignored) { summary.ignored.push(NOTIFICATION_REASONS[notification.reason]); read.push(message); continue; }
     if (notification.needsManual) {
       summary.manual.push(notification);
@@ -669,7 +698,7 @@ function describeNotification(notification) {
     NOTIFICATION_TYPE_LABELS[notification.type] ?? "عملية",
     `${sign}${formatMoney(notification.amountFils)}`,
     `${notification.merchant} (${notification.category})`,
-    `${formatDate(notification.dateISO)}${notification.dateAssumed ? " (اليوم افتراضياً)" : ""}`
+    `${formatDateTime(notification.dateISO, notification.timeHM)}${notification.dateAssumed ? " (اليوم افتراضياً)" : ""}`
   ];
   if (notification.balanceFils) bits.push(`رصيد ${formatMoney(notification.balanceFils)}`);
   if (notification.cardLast4) bits.push(`${notification.cardKind === "account" ? "حساب" : "بطاقة"} ••${notification.cardLast4}`);
@@ -700,12 +729,13 @@ function renderBankPreview() {
   const today = todayISO();
   const override = $("#bank-date")?.value ?? "";
   box.innerHTML = messages.slice(0, 5).map((message) => {
-    const { stampISO, body } = splitStamp(message);
+    const { stampISO, stampTime, body } = splitStamp(message);
     // المعاينة تستخدم نفس تاريخ الحفظ (الطابع أو ما يختاره المستخدم) حتى ما يفاجئه الفرق (F32)
     const stamp = validDate(override) && override <= today ? override : stampISO;
     const notification = parseBankNotification(body, { todayISO: stamp && stamp <= today ? stamp : today, fieldOrder: state.ui.bankFieldOrder });
     // التاريخ جا من سطر الطابع أو من خانة التاريخ، فما هو «اليوم افتراضياً» (F32)
     if (stamp && stamp <= today && notification.dateISO === stamp) notification.dateAssumed = false;
+    notification.timeHM = notificationClock(notification, stampISO, stampTime, stamp);
     let flag = "";
     if (!notification.ignored && !notification.needsManual) {
       const found = findNotificationDuplicate(notificationFingerprints(notification), notification);
@@ -969,7 +999,9 @@ function renderSpendingBehavior() {
 }
 
 const sourceLabel = (source) => source === "manual" ? "يدوي" : source === "bank-statement" ? "من الكشف" : "من الإشعار";
-const cardChip = (item) => item.cardLast4 ? ` · ${item.cardKind === "account" ? "حساب" : "بطاقة"} ••${escapeHTML(item.cardLast4)}` : "";
+// كل جزء من السطر الصغير يبقى بسطر وحد (ما ينقطع «من / الإشعار»)، والسطر نفسه يلتف بدل ما ينقص بنقاط
+const cardChip = (item) => item.cardLast4 ? ` · <span class="meta-keep">${item.cardKind === "account" ? "حساب" : "بطاقة"} ••${escapeHTML(item.cardLast4)}</span>` : "";
+const metaLine = (item) => `${escapeHTML(item.category)} · <span class="meta-keep">${escapeHTML(formatDateTime(item.date, item.time))}</span> · <span class="meta-keep">${escapeHTML(sourceLabel(item.source))}</span>${cardChip(item)}`;
 
 /* البحث يشمل الاسم الخام والتصنيف والتاريخ والمبلغ، ويوحّد الأرقام والفواصل العربية قبل المقارنة (F50). */
 function transactionMatches(item, query) {
@@ -983,7 +1015,7 @@ function draftLine(draft) {
   return `<article class="bank-draft" data-draft-id="${escapeHTML(draft.id)}">
     <strong>${escapeHTML(draft.merchant || "إشعار عملية")}</strong>
     <p>${escapeHTML(cutText(draft.raw, 220))}</p>
-    <small>${escapeHTML(foreign ? `بعملة ${foreign} — أدخل المبلغ بالدينار من كشف حسابك` : (NOTIFICATION_REASONS[draft.reason] ?? "ما قدرت أحدد المبلغ"))}${draft.dateISO ? ` · ${escapeHTML(formatDate(draft.dateISO))}` : ""}</small>
+    <small>${escapeHTML(foreign ? `بعملة ${foreign} — أدخل المبلغ بالدينار من كشف حسابك` : (NOTIFICATION_REASONS[draft.reason] ?? "ما قدرت أحدد المبلغ"))}${draft.dateISO ? ` · ${escapeHTML(formatDateTime(draft.dateISO, draft.time))}` : ""}</small>
     <div class="row">
       <button type="button" class="primary small" data-draft-amount="${escapeHTML(draft.id)}">أدخل المبلغ بالدينار</button>
       <button type="button" class="ghost small" data-draft-delete="${escapeHTML(draft.id)}">تجاهل</button>
@@ -1009,7 +1041,7 @@ function renderTransactions() {
   $("#pending-inbox-list").innerHTML = drafts.map(draftLine).join("") +
     (pending > 1 ? `<button type="button" class="secondary approve-all" data-approve-all="1">اعتماد الكل (بدون المشكوك فيها)</button>` : "") + pendingItems.map((item) => `
     <article class="pending-inbox-item">
-      <div><strong>${escapeHTML(item.merchant)}</strong><small>${escapeHTML(item.category)} · ${escapeHTML(formatDate(item.date))} · ${escapeHTML(sourceLabel(item.source))}${cardChip(item)}</small>${item.possibleDuplicate ? '<span class="pending-badge">قد تكون مكررة</span>' : ""}</div>
+      <div><strong>${escapeHTML(item.merchant)}</strong><small>${metaLine(item)}</small>${item.possibleDuplicate ? '<span class="pending-badge">قد تكون مكررة</span>' : ""}</div>
       <div class="pending-inbox-amount ${item.kind === "income" ? "income" : ""}">${item.kind === "income" ? "\u200E+" : "\u200E−"}${escapeHTML(formatMoney(item.amountFils))}</div>
       ${item.notifBalanceFils ? `<button type="button" class="ghost small sync-balance" data-sync-balance="${escapeHTML(item.id)}">الرصيد بالإشعار ${escapeHTML(formatMoney(item.notifBalanceFils))} — تحديث رصيدي</button>` : ""}
       <div class="pending-inbox-actions">
@@ -1026,7 +1058,7 @@ function renderTransactions() {
       <div class="transaction-icon ${item.kind === "income" ? "income" : ""}">${item.kind === "income" ? "↓" : "↑"}</div>
       <div class="transaction-main">
         <strong>${escapeHTML(item.merchant)}</strong>
-        <small>${escapeHTML(item.category)} · ${escapeHTML(formatDate(item.date))} · ${escapeHTML(sourceLabel(item.source))}${cardChip(item)}</small>
+        <small>${metaLine(item)}</small>
         ${item.reviewed ? "" : '<span class="pending-badge">تحتاج مراجعة</span>'}
       </div>
       <div>
@@ -1808,6 +1840,8 @@ function closeDialog(dialog) {
 }
 
 let pendingTransactionSource = "manual";
+let pendingTransactionTime = "";
+let pendingTransactionTimeDate = "";
 let pendingStatementBatch = null;
 let statementImportController = null;
 
@@ -1991,10 +2025,22 @@ function openTransaction(item = null, imported = null, draft = null) {
   $("#transaction-date").max = todayISO();
   $("#transaction-reviewed").checked = item ? true : !imported;
   pendingTransactionSource = item?.source ?? (imported ? "bank-text" : "manual");
+  // الوقت يرافق تاريخه: لو غيّرت التاريخ بالنافذة ينشال الوقت
+  pendingTransactionTime = item?.time ?? draft?.time ?? imported?.timeHM ?? "";
+  pendingTransactionTimeDate = item?.date ?? draft?.dateISO ?? imported?.dateISO ?? "";
+  renderTransactionTimeNote();
   pendingDraftId = draft?.id ?? "";
   categoryTouched = Boolean(item || imported);
   updateMoneyPreviews(form);
   openDialog($("#transaction-dialog"));
+}
+
+function renderTransactionTimeNote() {
+  const note = $("#transaction-time-note");
+  if (!note) return;
+  const show = validTime(pendingTransactionTime) && $("#transaction-date").value === pendingTransactionTimeDate;
+  note.hidden = !show;
+  note.textContent = show ? `وقت العملية ${formatTime(pendingTransactionTime)}` : "";
 }
 
 async function submitTransaction(event) {
@@ -2023,6 +2069,7 @@ async function submitTransaction(event) {
     id: existing?.id ?? createId(), amountFils, merchant: merchant.slice(0, 80),
     category: categories.includes($("#transaction-category").value) ? $("#transaction-category").value : "أخرى",
     kind: $("#transaction-kind").value === "income" ? "income" : "expense", date,
+    time: validTime(pendingTransactionTime) && date === pendingTransactionTimeDate ? pendingTransactionTime : "",
     reviewed: $("#transaction-reviewed").checked, source: pendingTransactionSource,
     rawMerchant: existing?.rawMerchant ?? (["bank-text", "bank-statement"].includes(pendingTransactionSource) ? merchant.slice(0, 80) : ""),
     fingerprint: existing?.fingerprint ?? "",
@@ -3611,6 +3658,7 @@ function bindEvents() {
   $("#storage-warning-export").addEventListener("click", exportData);
   $("#storage-warning-retry").addEventListener("click", () => { if (saveState()) toast("تم الحفظ على الجهاز ✅"); else toast("ما زال الحفظ متعذراً — صدّر نسخة احتياطية"); });
   $("#transaction-form").addEventListener("submit", submitTransaction);
+  $("#transaction-date").addEventListener("input", renderTransactionTimeNote);
   $("#commitment-form").addEventListener("submit", submitCommitment);
   $("#commitment-category").addEventListener("change", () => { $("#custom-category-field").hidden = $("#commitment-category").value !== "__custom"; });
   $("#loan-form").addEventListener("submit", submitLoan);

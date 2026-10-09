@@ -256,6 +256,34 @@ export function parseStampDate(line) {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
+// وقت سطر الطابع بنظام 24 ساعة («HH:mm»)، أو null لو الطابع بلا وقت. «٨:٠٦ م» و«8:06 PM» تصير 20:06، و«12:05 AM» تصير 00:05.
+export function parseStampTime(line) {
+  const text = normalizeDigits(String(line ?? ""))
+    .replace(/[‎‏؜]/g, "")
+    .trim()
+    .replace(STAMP_WEEKDAY, "")
+    .trim();
+  if (!STAMP_LINE.test(text)) return null;
+  const clock = /(\d{1,2}):(\d{2})(?::\d{2})?(?:\.\d+)?/.exec(text);
+  if (!clock) return null;
+  let hour = Number(clock[1]);
+  const minute = Number(clock[2]);
+  const meridiem = /^\s*(?:([AaPp])\.?\s?[Mm]\.?|(ص|م))/.exec(text.slice(clock.index + clock[0].length));
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null;
+    const pm = meridiem[1] ? /[Pp]/.test(meridiem[1]) : meridiem[2] === "م";
+    hour = (hour % 12) + (pm ? 12 : 0);
+  }
+  if (hour > 23 || minute > 59) return null;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+// وقت الإشعار نفسه جاي من المحلل مضغوط («1435»): نرجّعه «14:35»، أو "" لو ما فيه وقت صالح
+export function timeFromCompact(value) {
+  const match = /^([01]\d|2[0-3])([0-5]\d)$/.exec(String(value ?? ""));
+  return match ? `${match[1]}:${match[2]}` : "";
+}
+
 const isStampLine = (line) => parseStampDate(line) !== null;
 
 /*
@@ -360,7 +388,7 @@ export function splitStamp(message) {
   const text = String(message ?? "").trim();
   const [first, ...rest] = text.split("\n");
   const stampISO = parseStampDate(first);
-  return stampISO ? { stampISO, body: rest.join("\n").trim() } : { stampISO: null, body: text };
+  return stampISO ? { stampISO, stampTime: parseStampTime(first), body: rest.join("\n").trim() } : { stampISO: null, stampTime: null, body: text };
 }
 
 /* بصمة الإشعار: الأساس (تاريخ + مبلغ + تاجر) للتشابه، والكاملة تضيف النوع والرصيد بعد العملية والوقت
