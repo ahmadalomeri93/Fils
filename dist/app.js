@@ -1829,6 +1829,9 @@ function refreshAssistantView() {
 }
 
 function renderAll({ investmentInputs = false } = {}) {
+  // مستخدم جديد بدون دخل ولا عمليات: بدل الأصفار نعطيه خطوة واضحة
+  const homeStart = $("#home-start");
+  if (homeStart) homeStart.hidden = !(state.settings.incomeFils === 0 && state.transactions.length === 0);
   renderDashboard();
   renderGold();
   renderTransactions();
