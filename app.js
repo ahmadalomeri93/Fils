@@ -7,7 +7,7 @@ import { PIN_PATTERN, backupStatus, createLockRecord, cryptoAvailable, describeB
   remainingLockMs, sanitizeLockRecord, shouldRelock, verifyPin } from "./safety.js";
 import { GOLD_PRICE_URL, goldSummary, mountGold, priceFromApi, sanitizeGold } from "./gold.js";
 import { decideUpdate, installedVersion, remoteVersion, staticCacheNames, versionLabel } from "./app-update.js";
-import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, notificationFingerprints, parseBankNotification, splitBankMessages, splitStamp, timeFromCompact, BANK_FIELDS, DEFAULT_FIELD_ORDER } from "./bank-notifications.js";
+import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, isOwnTransfer, notificationFingerprints, parseBankNotification, splitBankMessages, splitStamp, timeFromCompact, BANK_FIELDS, DEFAULT_FIELD_ORDER } from "./bank-notifications.js";
 import { parsePortfolioLink, newPortfolioHoldings } from "./portfolio-import.js";
 import { mountAssistant } from "./ai-assistant.js";
 import { clearAiStore } from "./ai-client.js";
@@ -633,7 +633,7 @@ function ingestBankText(raw, { fromFile = false, dateOverrideISO = "" } = {}) {
     }
     batch.add(hash);
     const stamp = dateOverrideISO && validDate(dateOverrideISO) && dateOverrideISO <= today ? dateOverrideISO : stampISO;
-    const notification = parseBankNotification(body, { todayISO: stamp && stamp <= today ? stamp : today, fieldOrder: state.ui.bankFieldOrder });
+    const notification = withOwnTransferRule(parseBankNotification(body, { todayISO: stamp && stamp <= today ? stamp : today, fieldOrder: state.ui.bankFieldOrder }));
     notification.timeHM = notificationClock(notification, stampISO, stampTime, stamp);
     if (notification.ignored) { summary.ignored.push(NOTIFICATION_REASONS[notification.reason]); read.push(message); continue; }
     if (notification.needsManual) {
@@ -661,6 +661,13 @@ function ingestBankText(raw, { fromFile = false, dateOverrideISO = "" } = {}) {
   }
   if (summary.queued || summary.drafts || fromFile) { saveState(); renderAll(); }
   return summary;
+}
+
+// تحويل بين حساباتك ما ينسجّل: نقارن الطرف الثاني بحساباتك اللي عرفناها من إشعاراتك السابقة.
+function withOwnTransferRule(notification) {
+  if (notification.ignored || notification.needsManual) return notification;
+  const accounts = state.transactions.filter((item) => item.cardKind === "account" && item.cardLast4).map((item) => item.cardLast4);
+  return isOwnTransfer(notification, accounts) ? { ...notification, ignored: true, reason: "own_transfer" } : notification;
 }
 
 function manualBankMessage(notification) {
@@ -734,7 +741,7 @@ function renderBankPreview() {
     const { stampISO, stampTime, body } = splitStamp(message);
     // المعاينة تستخدم نفس تاريخ الحفظ (الطابع أو ما يختاره المستخدم) حتى ما يفاجئه الفرق (F32)
     const stamp = validDate(override) && override <= today ? override : stampISO;
-    const notification = parseBankNotification(body, { todayISO: stamp && stamp <= today ? stamp : today, fieldOrder: state.ui.bankFieldOrder });
+    const notification = withOwnTransferRule(parseBankNotification(body, { todayISO: stamp && stamp <= today ? stamp : today, fieldOrder: state.ui.bankFieldOrder }));
     // التاريخ جا من سطر الطابع أو من خانة التاريخ، فما هو «اليوم افتراضياً» (F32)
     if (stamp && stamp <= today && notification.dateISO === stamp) notification.dateAssumed = false;
     notification.timeHM = notificationClock(notification, stampISO, stampTime, stamp);
@@ -1002,7 +1009,7 @@ function renderSpendingBehavior() {
 
 const sourceLabel = (source) => source === "manual" ? "يدوي" : source === "bank-statement" ? "من الكشف" : "من الإشعار";
 // كل جزء من السطر الصغير يبقى بسطر وحد (ما ينقطع «من / الإشعار»)، والسطر نفسه يلتف بدل ما ينقص بنقاط
-const cardChip = (item) => item.cardLast4 ? ` · <span class="meta-keep">${item.cardKind === "account" ? "حساب" : "بطاقة"} ••${escapeHTML(item.cardLast4)}</span>` : "";
+const cardChip = (item) => item.cardLast4 ? ` · <span class="meta-keep">${item.cardKind === "account" ? (/^تحويل/.test(item.merchant) ? (item.kind === "income" ? "إلى حساب" : "من حساب") : "حساب") : "بطاقة"} ••${escapeHTML(item.cardLast4)}</span>` : "";
 const metaLine = (item) => `${escapeHTML(item.category)} · <span class="meta-keep">${escapeHTML(formatDateTime(item.date, item.time))}</span> · <span class="meta-keep">${escapeHTML(sourceLabel(item.source))}</span>${cardChip(item)}`;
 
 /* البحث يشمل الاسم الخام والتصنيف والتاريخ والمبلغ، ويوحّد الأرقام والفواصل العربية قبل المقارنة (F50). */
@@ -1048,7 +1055,8 @@ function renderTransactions() {
       ${item.notifBalanceFils ? `<button type="button" class="ghost small sync-balance" data-sync-balance="${escapeHTML(item.id)}">الرصيد بالإشعار ${escapeHTML(formatMoney(item.notifBalanceFils))} — تحديث رصيدي</button>` : ""}
       <div class="pending-inbox-actions">
         <button type="button" class="primary" data-approve-pending="${escapeHTML(item.id)}">اعتماد</button>
-        <button type="button" class="secondary" data-review-pending="${escapeHTML(item.id)}">تعديل ومراجعة</button>
+        <button type="button" class="secondary" data-review-pending="${escapeHTML(item.id)}">تعديل</button>
+        <button type="button" class="danger" data-delete-pending="${escapeHTML(item.id)}">حذف</button>
       </div>
     </article>`).join("");
   const pendingNotice = $("#pending-notice");
@@ -3807,6 +3815,12 @@ function bindEvents() {
     event.stopPropagation();
     const approveId = event.target.dataset.approvePending;
     const reviewId = event.target.dataset.reviewPending;
+    const deletePendingId = event.target.dataset.deletePending;
+    if (deletePendingId) {
+      // نفس حذف قائمة العمليات: يسأل تأكيد ويعرض «تراجع»
+      removeRecord("transactions", deletePendingId, "العملية");
+      return;
+    }
     if (event.target.dataset.approveAll) {
       const ready = state.transactions.filter((item) => !item.reviewed && !item.possibleDuplicate);
       if (!ready.length) { toast("كلها تحتاج مراجعتك — فيها عمليات قد تكون مكررة"); return; }

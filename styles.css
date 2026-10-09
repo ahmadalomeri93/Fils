@@ -231,7 +231,7 @@ main { width: min(100%, 1040px); margin: 0 auto; padding: 22px 18px calc(110px +
 .pending-inbox-item strong, .pending-inbox-item small { display: block; }
 .pending-inbox-item small { margin-top: 3px; color: var(--muted); }
 .pending-inbox-amount { text-align: left; color: var(--danger); font-weight: 850; white-space: nowrap; }
-.pending-inbox-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pending-inbox-actions { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .pending-inbox-actions button { min-height: 38px; border-radius: 11px; font-weight: 800; }
 .search { display: flex; align-items: center; gap: 8px; }
 .search input { width: 100%; border: 0; padding: 8px 2px; background: transparent; }
