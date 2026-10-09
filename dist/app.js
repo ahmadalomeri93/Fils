@@ -9,6 +9,8 @@ import { GOLD_PRICE_URL, goldSummary, mountGold, priceFromApi, sanitizeGold } fr
 import { decideUpdate, installedVersion, remoteVersion, staticCacheNames, versionLabel } from "./app-update.js";
 import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, notificationFingerprints, parseBankNotification, splitBankMessages, splitStamp, timeFromCompact, BANK_FIELDS, DEFAULT_FIELD_ORDER } from "./bank-notifications.js";
 import { parsePortfolioLink, newPortfolioHoldings } from "./portfolio-import.js";
+import { mountAssistant } from "./ai-assistant.js";
+import { clearAiStore } from "./ai-client.js";
 import { INBOX_BASE, ackInbox, agoLabel, claimInbox, fetchInbox, inboxErrorMessage, inboxLink, itemsToBankText, newInboxKey, parseInboxKey, readInboxConfig, unclaimInbox, writeInboxConfig } from "./inbox.js";
 import {
   categories,
@@ -1783,6 +1785,7 @@ function renderCheckup() {
 }
 
 let goldController = null;
+let assistantController = null;
 async function fetchGoldPrice() {
   const get = async (url) => {
     const response = await fetch(url, { cache: "no-store", referrerPolicy: "no-referrer", credentials: "omit" });
@@ -1798,6 +1801,22 @@ function renderGold() {
   if (!root) return;
   goldController ??= mountGold(root, { getState: () => state, save: () => saveState(), toast, fetchPrice: fetchGoldPrice });
   goldController.render();
+}
+
+/* «المحاسب الذكي»: خارج renderAll عمداً حتى لا تضيع المحادثة ومعاينات «تنفيذ» مع كل commit. يتحدث من أحداثه فقط. للويب فقط. */
+function renderAssistant() {
+  if (IS_NATIVE) return;
+  const root = $("#assistant-root");
+  if (!root) return;
+  assistantController ??= mountAssistant(root, {
+    getState: () => state, commit: (message) => commit(message), refresh: () => renderAll(), isLocked: () => lockedNow, todayISO, toast
+  });
+  assistantController.activate();
+}
+
+// بعد فتح القفل أو مسح البيانات: لو شاشة المحاسب هي المفتوحة نعيد تفعيلها (تتحقق من الخدمة والموافقة والربط من جديد)
+function refreshAssistantView() {
+  if (!IS_NATIVE && $("#assistant-view")?.classList.contains("active")) renderAssistant();
 }
 
 function renderAll({ investmentInputs = false } = {}) {
@@ -3157,7 +3176,7 @@ function submitSettings(event) {
 }
 
 function switchView(target, updateHash = true) {
-  if (!$( `[data-view="${target}"]` )) target = "dashboard";
+  if (!$( `[data-view="${target}"]` ) || (target === "assistant" && IS_NATIVE)) target = "dashboard";
   $$(".view").forEach((view) => view.classList.toggle("active", view.dataset.view === target));
   $$("[data-target]").forEach((button) => {
     const active = button.dataset.target === target || button.dataset.activeFor === target;
@@ -3165,11 +3184,12 @@ function switchView(target, updateHash = true) {
     if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  const moreActive = ["advisor", "goals", "checkup", "spending"].includes(target);
+  const moreActive = ["advisor", "goals", "checkup", "spending", "assistant"].includes(target);
   $("#more-nav-button").classList.toggle("active", moreActive);
   if (moreActive) $("#more-nav-button").setAttribute("aria-current", "page");
   else $("#more-nav-button").removeAttribute("aria-current");
   if (updateHash && location.hash !== `#${target}`) history.replaceState(null, "", `#${target}`);
+  if (target === "assistant") renderAssistant();
   scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -3334,6 +3354,7 @@ function renderSecuritySettings() {
 function lockApp() {
   if (!lockRecord || lockedNow) return;
   lockedNow = true;
+  assistantController?.onLock();
   document.querySelectorAll("dialog[open]").forEach((dialog) => closeDialog(dialog));
   document.body.classList.add("is-locked");
   $("#lock-screen").hidden = false;
@@ -3350,6 +3371,7 @@ function unlockApp() {
   clearInterval(lockTimer);
   renderBackupReminder();
   renderNudges();
+  refreshAssistantView();
   if (deferredBankText) {
     const text = deferredBankText;
     deferredBankText = "";
@@ -3384,6 +3406,8 @@ async function forgotPin() {
   writeLockRecord(null);
   // The automatic snapshot would otherwise restore everything without the PIN.
   try { localStorage.removeItem(SNAPSHOT_KEY); } catch { /* storage unavailable */ }
+  // سجل تراجع المحاسب الذكي فيه قيم مالية: يُمسح مع المسح الكامل حتى لا يصير طريقاً حول الرمز
+  clearAiStore(); assistantController?.wipe();
   state = defaultState();
   state.ui.initialPortfolioApplied = true;
   try { localStorage.removeItem(STORAGE_KEY); storageAvailable = true; } catch { storageAvailable = false; }
@@ -3559,12 +3583,14 @@ async function resetData({ permanent = false } = {}) {
   if (!permanent && !snapshotBeforeChange("reset")) {
     if (!(await askConfirm("ما قدرت أحفظ نسخة رجوع. صدّر نسخة احتياطية أولاً، أو نمسح بدون شبكة أمان؟", { okLabel: "امسح بدون نسخة", danger: true }))) return;
   }
-  if (permanent) { try { localStorage.removeItem(SNAPSHOT_KEY); } catch { /* storage unavailable */ } }
+  if (permanent) { try { localStorage.removeItem(SNAPSHOT_KEY); } catch { /* storage unavailable */ } clearAiStore(); }
+  assistantController?.wipe();
   state = defaultState();
   state.ui.initialPortfolioApplied = true;
   try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage unavailable */ }
   closeDialog($("#settings-dialog"));
   commit(permanent ? "تم المسح النهائي" : "تم مسح البيانات", { investmentInputs: true });
+  refreshAssistantView();
   setTimeout(openOnboarding, 350);
 }
 

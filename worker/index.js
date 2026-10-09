@@ -1,6 +1,10 @@
 // صندوق استقبال إشعارات حوّش: Worker + Durable Object على حساب Cloudflare حقك.
 // الملفات الثابتة (dist) تُقدَّم قبل هذا الكود؛ هنا فقط مسارات /api/*.
 import { HttpError, InboxStore, KEY_PATTERN, MAX_BODY_BYTES, bearerKey } from "./inbox-core.js";
+import { handleAi } from "./ai.js";
+
+// حارس «المحاسب الذكي» (Durable Object) يُصدَّر من نقطة الدخول ليراه Cloudflare
+export { AiGuard } from "./ai-guard.js";
 
 const CORS = {
   "access-control-allow-origin": "*",
@@ -79,9 +83,11 @@ async function ask(env, op, payload) {
   } catch { return fail(new Error("server")); }
 }
 
-export async function handleRequest(request, env) {
+export async function handleRequest(request, env, deps = {}) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } });
+  // مسارات المحاسب الذكي لها CORS خاص (قائمة أصول، مو "*") فتنفصل قبل مسارات الاستقبال
+  if (url.pathname === "/api/ai" || url.pathname.startsWith("/api/ai/")) return handleAi(request, env, deps);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   try {
     const path = url.pathname;
@@ -112,7 +118,8 @@ function requireKey(request) {
   return key;
 }
 
-export default { fetch: handleRequest };
+// Cloudflare يمرّر ctx كوسيط ثالث؛ ما نمرره كله لـdeps (deps للاختبار فقط)، فقط waitUntil ليكمل تحرير علامة الطلب لو انقطع الاتصال
+export default { fetch: (request, env, ctx) => handleRequest(request, env, { waitUntil: (promise) => ctx?.waitUntil?.(promise) }) };
 
 // كائن واحد يحفظ كل شي ويرتّب الطلبات بالدور، فما يتكرر عنصر ولا يضيع.
 export class Inbox {

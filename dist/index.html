@@ -358,6 +358,11 @@
       <div id="goal-list" class="card-list"></div>
       <div id="goal-empty" class="empty-state" hidden><span>◎</span><h2>شنو هدفك؟</h2><p>صندوق طوارئ، سداد دين، سيارة، أو استثمار.</p><button class="primary" data-action="new-goal">إضافة هدف</button></div>
     </section>
+
+    <section class="view web-only" id="assistant-view" data-view="assistant">
+      <div class="page-title"><div><span class="eyebrow">اسأل وعدّل بأوامرك</span><h1>المحاسب الذكي</h1></div></div>
+      <div id="assistant-root"></div>
+    </section>
   </main>
 
   <nav class="bottom-nav" aria-label="التنقل الرئيسي">
@@ -377,6 +382,7 @@
       <button type="button" data-target="spending"><span>◔</span><strong>المصروف والميزانية</strong><small>الفعلي مقابل الميزانية</small></button>
       <button type="button" data-target="checkup"><span>✚</span><strong>الفحص المالي</strong><small>تقييم وزكاة وتكلفة القرض</small></button>
       <button type="button" data-target="goals"><span>◎</span><strong>الأهداف</strong><small>تابع ادخارك وتقدمك</small></button>
+      <button type="button" class="web-only" data-target="assistant"><span>✧</span><strong>المحاسب الذكي</strong><small>اسأله واطلب تعديل بياناتك</small></button>
     </div>
     <section class="bank-card" id="bank-card">
       <div class="section-heading"><h2>سجّل مصروفك من إشعارك</h2><span class="pill" id="bank-card-pending" hidden>0</span></div>

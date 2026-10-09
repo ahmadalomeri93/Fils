@@ -1,8 +1,8 @@
-const CACHE_NAME = "fils-static-v43";
+const CACHE_NAME = "fils-static-v44";
 // شبكة أولاً بمهلة قصيرة: على شبكة ضعيفة ما نخلي الصفحة تنتظر، نرجع النسخة المخزنة (F35).
 const NETWORK_TIMEOUT_MS = 2500;
 const OFFLINE_ASSETS = [
-  "./", "./index.html", "./styles.css", "./fonts/plex-arabic-400.woff2", "./fonts/plex-arabic-500.woff2", "./fonts/plex-arabic-700.woff2", "./fonts/plex-latin-400.woff2", "./fonts/plex-latin-500.woff2", "./fonts/plex-latin-700.woff2", "./app.js", "./app-update.js", "./native-bridge.js", "./finance-core.js", "./financial-engine.js", "./checkup.js", "./bank-notifications.js", "./inbox.js", "./onboarding.js", "./safety.js", "./spending.js", "./salary-plan.js", "./loan-ocr.js", "./statement-import.js", "./pdf-statement.js", "./vendor/pdfjs/pdf.mjs", "./vendor/pdfjs/pdf.worker.mjs", "./kuwait-stocks.js", "./gold.js", "./portfolio-import.js",
+  "./", "./index.html", "./styles.css", "./fonts/plex-arabic-400.woff2", "./fonts/plex-arabic-500.woff2", "./fonts/plex-arabic-700.woff2", "./fonts/plex-latin-400.woff2", "./fonts/plex-latin-500.woff2", "./fonts/plex-latin-700.woff2", "./app.js", "./app-update.js", "./native-bridge.js", "./finance-core.js", "./financial-engine.js", "./checkup.js", "./bank-notifications.js", "./inbox.js", "./onboarding.js", "./safety.js", "./spending.js", "./salary-plan.js", "./loan-ocr.js", "./statement-import.js", "./pdf-statement.js", "./vendor/pdfjs/pdf.mjs", "./vendor/pdfjs/pdf.worker.mjs", "./kuwait-stocks.js", "./gold.js", "./portfolio-import.js", "./ai-assistant.js", "./ai-client.js", "./ai-tools.js", "./ai-tool-schemas.js",
   "./manifest.webmanifest", "./privacy.html", "./icons/fils-mark.svg", "./icons/icon-192.png",
   "./icons/icon-512.png", "./icons/apple-touch-icon.png"
 ];
