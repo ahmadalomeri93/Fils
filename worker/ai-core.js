@@ -9,6 +9,11 @@ export const DEFAULT_ORIGINS = ["https://broken-queen-f0ed.ahmadalomeri.workers.
 export const DEFAULT_MODEL = "claude-sonnet-5-5";
 export const DEFAULT_SEARCH_TOOL = "web_search_20250305";
 export const DEFAULT_API_BASE = "https://api.anthropic.com";
+// v46: بدون مفتاح Anthropic يشتغل المحاسب على Workers AI من Cloudflare (ربط AI بحسابه، مجاني ضمن 10 آلاف وحدة باليوم)
+export const WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
+export const WORKERS_AI_KEY = "workers-ai-binding";
+// أسعار Cloudflare الرسمية: 5500 وحدة لكل مليون توكن دخل و36400 خرج، والوحدة 0.011 دولار لكل ألف
+export const WORKERS_AI_PRICES = { in: 0.0605, out: 0.4004, search: 0 };
 export const TOKEN_TTL_SEC = 90 * 86_400;
 export const MAX_CHAT_BYTES = 700_000;
 export const MAX_PAIR_BYTES = 4096;
@@ -78,12 +83,16 @@ export function readConfig(env) {
     if (/^https?:\/\/[^\s/*?#@]+$/.test(origin)) origins.add(origin);
   }
   const effort = String(e.AI_EFFORT ?? "").trim().toLowerCase();
+  const provider = providerOf(e);
+  const free = provider === "workers-ai";
   return {
-    model: word(e.AI_MODEL, /^[\w.:-]{1,100}$/, DEFAULT_MODEL),
+    provider,
+    model: free ? word(e.AI_MODEL, /^@cf\/[\w.-]{1,40}\/[\w.-]{1,60}$/, WORKERS_AI_MODEL) : word(e.AI_MODEL, /^[\w.:-]{1,100}$/, DEFAULT_MODEL),
     effort: ["low", "medium", "high"].includes(effort) ? effort : "medium",
     maxTokens: Math.min(16000, Math.max(1024, Math.floor(num(e.AI_MAX_TOKENS, 6000)))),
-    dayCap: money(e.AI_DAILY_USD_CAP, 1),
-    monthCap: money(e.AI_MONTHLY_USD_CAP, 15),
+    // المجاني: 10 آلاف وحدة باليوم = 0.11 دولار، فنوقف عند 0.10 قبل ما يرفض Cloudflare
+    dayCap: money(e.AI_DAILY_USD_CAP, free ? 0.1 : 1),
+    monthCap: money(e.AI_MONTHLY_USD_CAP, free ? 3 : 15),
     epoch: (String(e.AI_TOKEN_EPOCH ?? "").trim() || "0").slice(0, 32),
     // علامة تدخل في بصمة قفل الاقتران فقط: تغييرها يفك القفل بدون إبطال الرموز
     pairReset: String(e.AI_PAIR_RESET ?? "").trim().slice(0, 64),
@@ -91,7 +100,9 @@ export function readConfig(env) {
     // نسخة البحث الوحيدة المقبولة؛ أي قيمة ثانية تُهمل (النسخ الأحدث ترجع كتل code_execution ما تمر بقائمة الرد المُعاد)
     searchTool: word(e.AI_WEB_SEARCH_TOOL, /^web_search_20250305$/, DEFAULT_SEARCH_TOOL),
     fallbacks: String(e.AI_FALLBACKS ?? "").trim().toLowerCase() !== "off",
-    prices: { in: money(e.AI_PRICE_IN_PER_MTOK, 2), out: money(e.AI_PRICE_OUT_PER_MTOK, 10), search: money(e.AI_PRICE_SEARCH_PER_K, 10) },
+    prices: free
+      ? { in: money(e.AI_PRICE_IN_PER_MTOK, WORKERS_AI_PRICES.in), out: money(e.AI_PRICE_OUT_PER_MTOK, WORKERS_AI_PRICES.out), search: 0 }
+      : { in: money(e.AI_PRICE_IN_PER_MTOK, 2), out: money(e.AI_PRICE_OUT_PER_MTOK, 10), search: money(e.AI_PRICE_SEARCH_PER_K, 10) },
     apiBase: apiBase(e.AI_API_BASE)
   };
 }
@@ -100,8 +111,11 @@ export function readConfig(env) {
 export const ownerCodeOf = (env) => (typeof env?.AI_OWNER_CODE === "string" ? env.AI_OWNER_CODE.trim() : "");
 export const ownerCodeValid = (code) => typeof code === "string" && code.length >= 12;
 export const apiKeyOf = (env) => (typeof env?.ANTHROPIC_API_KEY === "string" ? env.ANTHROPIC_API_KEY.trim() : "");
-export const secretsOf = (env) => ({ apiKey: apiKeyOf(env), ownerCode: ownerCodeOf(env) });
-export const isConfigured = (env) => Boolean(apiKeyOf(env)) && ownerCodeValid(ownerCodeOf(env));
+export const hasWorkersAi = (env) => Boolean(env?.AI) && typeof env.AI.run === "function";
+// مفتاح Anthropic إن وُجد يغلب؛ وإلا ربط Workers AI؛ وإلا لا شي
+export const providerOf = (env) => (apiKeyOf(env) ? "anthropic" : hasWorkersAi(env) ? "workers-ai" : "none");
+export const secretsOf = (env) => ({ apiKey: apiKeyOf(env) || (hasWorkersAi(env) ? WORKERS_AI_KEY : ""), ownerCode: ownerCodeOf(env) });
+export const isConfigured = (env) => providerOf(env) !== "none" && ownerCodeValid(ownerCodeOf(env));
 export const originAllowed = (origin, config) => typeof origin === "string" && config.origins.has(origin);
 
 // ---- تشفير: base64url وHMAC ----
@@ -400,6 +414,77 @@ export function costOf(usage, prices) {
     + usage.cache_read_input_tokens * 0.1 * prices.in / 1e6 + usage.cache_creation_input_tokens * 1.25 * prices.in / 1e6
     + usage.web_searches * prices.search / 1000
   );
+}
+
+// ---- Workers AI: تحويل رسائلنا (شكل Anthropic) لشكل الدردشة العام (OpenAI) وردّه لشكلنا ----
+const NO_SEARCH_NOTE = `\n\nIMPORTANT FOR THIS DEPLOYMENT: there is no web_search tool here. For any public price or rate, say in Arabic that you cannot look it up now (do not guess a price). Use only the tools provided.`;
+const textOf = (content) => (typeof content === "string" ? content : Array.isArray(content) ? content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n") : "");
+
+export function toWorkersAiMessages(messages) {
+  const out = [{ role: "system", content: SYSTEM_PROMPT + NO_SEARCH_NOTE }];
+  for (const message of messages) {
+    if (message.role === "user") {
+      if (typeof message.content === "string") { out.push({ role: "user", content: message.content }); continue; }
+      for (const block of message.content) {
+        if (block.type === "tool_result") out.push({ role: "tool", tool_call_id: block.tool_use_id, content: (block.is_error ? "ERROR: " : "") + (textOf(block.content) || "(empty)") });
+      }
+      const text = textOf(message.content);
+      if (text) out.push({ role: "user", content: text });
+    } else {
+      const text = textOf(message.content);
+      const calls = message.content.filter((b) => b?.type === "tool_use").map((b) => ({ id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } }));
+      const entry = { role: "assistant", content: text || (calls.length ? "" : "...") };
+      if (calls.length) entry.tool_calls = calls;
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
+export function buildWorkersAiInput(config, messages) {
+  const tools = AI_CLIENT_TOOLS.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } }));
+  return { messages: toWorkersAiMessages(messages), tools, max_tokens: Math.min(config.maxTokens, 3000), temperature: 0.2 };
+}
+
+const newToolId = () => `toolu_${crypto.randomUUID().replaceAll("-", "")}`;
+function callInput(args) {
+  if (isPlain(args)) return args;
+  if (typeof args === "string" && args.trim()) { try { const parsed = JSON.parse(args); return isPlain(parsed) ? parsed : {}; } catch { return {}; } }
+  return {};
+}
+
+// يقبل الشكلين: {choices:[{message}]} الحديث و{response, tool_calls} القديم. null لو ما فيه نص ولا استدعاء.
+export function parseWorkersAiReply(result, config, sentChars = 0) {
+  const choice = Array.isArray(result?.choices) ? result.choices[0] : null;
+  const message = choice?.message ?? result ?? {};
+  const raw = message.content ?? result?.response ?? "";
+  const text = (typeof raw === "string" ? raw : textOf(raw)).trim().slice(0, 19000);
+  const finish = choice?.finish_reason;
+  // رد انقطع بحد الطول: الوسائط ناقصة وقد تنفّذ أداة بفلتر ناقص، فنتجاهل الاستدعاءات
+  const found = finish === "length" ? [] : Array.isArray(message.tool_calls) ? message.tool_calls : Array.isArray(result?.tool_calls) ? result.tool_calls : [];
+  const content = [];
+  if (text) content.push({ type: "text", text });
+  for (const call of found.slice(0, 8)) {
+    const fn = call?.function ?? call;
+    const name = typeof fn?.name === "string" ? fn.name : "";
+    if (!TOOL_NAME.test(name)) continue;
+    const input = callInput(fn.arguments ?? fn.input);
+    // فاحص الرسائل عندنا يرفض وسائط أطول من 8000 حرف، فلا نرجّع شيئاً ينكسر به الطلب التالي
+    if (JSON.stringify(input).length > 7500) continue;
+    content.push({ type: "tool_use", id: newToolId(), name, input });
+  }
+  if (!content.length) return null;
+  const toolUse = content.some((b) => b.type === "tool_use");
+  const usage = result?.usage ?? {};
+  const inTokens = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : Math.ceil(sentChars / 3);
+  const outTokens = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : Math.ceil(JSON.stringify(content).length / 3);
+  return {
+    content,
+    stop_reason: toolUse ? "tool_use" : finish === "length" ? "max_tokens" : "end_turn",
+    stop_details: null,
+    model: config.model,
+    usage: { input_tokens: inTokens, output_tokens: outTokens }
+  };
 }
 
 // رد Claude الناجح -> نص الرد للعميل؛ null لو الشكل غير متوقع

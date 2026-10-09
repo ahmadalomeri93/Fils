@@ -1,6 +1,6 @@
 // مسارات «المحاسب الذكي» (/api/ai/*): وسيط آمن لـ Claude. المفتاح ما يطلع من الـWorker،
 // والعميل يرسل messages فقط؛ النظام والأدوات والنموذج كلها من عندنا.
-// الأسرار (لا تُكتب بأي ملف): ANTHROPIC_API_KEY، AI_OWNER_CODE (12 حرفاً فأكثر).
+// الأسرار (لا تُكتب بأي ملف): ANTHROPIC_API_KEY (اختياري: بدونه يشتغل على Workers AI المجاني عبر ربط AI)، AI_OWNER_CODE (12 حرفاً فأكثر).
 // متغيرات اختيارية: AI_MODEL، AI_EFFORT، AI_MAX_TOKENS، AI_DAILY_USD_CAP، AI_MONTHLY_USD_CAP، AI_TOKEN_EPOCH (تغييره يبطل كل الرموز)،
 // AI_ALLOWED_ORIGINS، AI_WEB_SEARCH_TOOL (web_search_20250305 فقط)، AI_FALLBACKS ("off" يوقفها)، AI_PRICE_IN_PER_MTOK،
 // AI_PRICE_OUT_PER_MTOK، AI_PRICE_SEARCH_PER_K، AI_API_BASE (محلي للاختبار فقط).
@@ -9,6 +9,7 @@
 // deps للاختبار والتشغيل: { fetch, now, sleep, timeoutMs, flags, waitUntil }. waitUntil (من ctx بنقطة الدخول) يبقي تحرير علامة الطلب
 // شغّالاً حتى لو انقطع الاتصال، وهو اختياري.
 import {
+  buildWorkersAiInput, parseWorkersAiReply,
   AI_VERSION, AiError, DEVICE_PATTERN, MAX_CHAT_BYTES, MAX_PAIR_BYTES, MAX_UPSTREAM_BYTES, RETRY_DELAY_MS, UPSTREAM_TIMEOUT_MS, aiFlags, apiKeyOf, bearerToken, buildUpstream,
   costOf, errorBody, failureKind, hasThinking, isConfigured, mapUpstreamStatus, normalizeUsage, originAllowed, ownerCodeMatches, parseReply, readBodyCapped, readConfig,
   ownerCodeOf, pairFingerprint, round6, secretsOf, sha256Hex, signToken, stripThinking, validateMessages, verifyToken
@@ -56,7 +57,7 @@ async function readJson(request, max, tooBig) {
   catch { throw new AiError(400, "bad_request", "the body must be valid JSON"); }
 }
 
-const status = ({ env, config }) => ({ body: { ok: true, configured: isConfigured(env), model: config.model, version: AI_VERSION, searchTool: config.searchTool } });
+const status = ({ env, config }) => ({ body: { ok: true, configured: isConfigured(env), model: config.model, version: AI_VERSION, searchTool: config.searchTool, provider: config.provider } });
 
 async function pair(ctx) {
   const { request, env, config, now } = ctx;
@@ -175,6 +176,48 @@ async function callClaude({ env, config, deps }, messages, signal) {
   } finally { clearTimeout(timer); if (onAbort) signal.removeEventListener("abort", onAbort); }
 }
 
+// Workers AI (مجاني): نفس العقد لكن بدون بحث ويب. حد Cloudflare اليومي يرجع كخطأ 429 بدل نص الخطأ الأصلي.
+async function callWorkersAi({ env, config, deps }, messages, signal) {
+  const run = deps.aiRun ?? ((model, input) => env.AI.run(model, input));
+  const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const input = buildWorkersAiInput(config, messages);
+  const sentChars = JSON.stringify(input).length;
+  let timer;
+  const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new AiError(504, "upstream_timeout", "the AI service did not answer in time")), deps.timeoutMs ?? UPSTREAM_TIMEOUT_MS); });
+  deadline.catch(() => {});
+  let onAbort;
+  const closed = new Promise((_, reject) => {
+    if (!signal) return;
+    onAbort = () => reject(new AiError(499, "client_closed", "the client closed the request"));
+    if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  closed.catch(() => {});
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      if (signal?.aborted) throw new AiError(499, "client_closed", "the client closed the request");
+      let result;
+      try { result = await Promise.race([Promise.resolve().then(() => run(config.model, input)), deadline, closed]); }
+      catch (error) {
+        if (error instanceof AiError) throw error;
+        const detail = `${error?.message ?? ""}`;
+        // سقف السياق ما هو حد يومي: 413 وتبدأ محادثة جديدة. الحد اليومي فقط (4006، neurons، daily، allocation) هو اللي ينتظر ساعة
+        if (/context|too\s+(?:long|large)|maximum\s+(?:input|length|tokens)|input\s+exceeds/i.test(detail)) { note("too_large"); throw new AiError(413, "too_large", "the conversation is too large"); }
+        if (/neurons?|daily|quota|allocation|4006/i.test(detail)) { note("quota"); throw new AiError(429, "rate_limited", "the free AI allowance for today is used up, try again after midnight UTC", 3600); }
+        if (attempt === 0) { note("workers_ai_retry"); await sleep(RETRY_DELAY_MS); continue; }
+        note("workers_ai_error");
+        throw new AiError(502, "upstream_error", "the AI service failed");
+      }
+      const reply = parseWorkersAiReply(result, config, sentChars);
+      if (!reply) {
+        // Cloudflare حسبت الاستدعاء حتى لو الرد ما قدرنا نقرأه: نسجّل الاستخدام المُبلَّغ ليبقى عدّاد اليوم صادقاً
+        note("bad_reply");
+        throw Object.assign(new AiError(502, "upstream_error", "the AI service failed"), { usage: normalizeUsage({ input_tokens: result?.usage?.prompt_tokens, output_tokens: result?.usage?.completion_tokens }) });
+      }
+      return { reply, warnings: ["search_unavailable"] };
+    }
+  } finally { clearTimeout(timer); if (onAbort) signal.removeEventListener("abort", onAbort); }
+}
+
 async function chat(ctx) {
   const { request, env, config, now } = ctx;
   const did = await authenticate(ctx);
@@ -196,7 +239,7 @@ async function chat(ctx) {
   if (signal?.aborted) { onAbort(); throw new AiError(499, "client_closed", "the client closed the request"); }
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    const { reply, warnings } = await callClaude(ctx, messages, signal);
+    const { reply, warnings } = await (config.provider === "workers-ai" ? callWorkersAi(ctx, messages, signal) : callClaude(ctx, messages, signal));
     const fetchedAt = new Date(now()).toISOString();
     const counts = normalizeUsage(reply.usage);
     const usd = costOf(counts, config.prices);
@@ -223,6 +266,13 @@ async function chat(ctx) {
         warnings
       }
     };
+  } catch (error) {
+    if (error?.usage && (error.usage.input_tokens || error.usage.output_tokens)) {
+      const usd = costOf(error.usage, config.prices);
+      const recording = settle("record", { usd, tokens: error.usage.input_tokens + error.usage.output_tokens, searches: 0, did, hash, at: now() });
+      if (recording) await recording.catch(() => {});
+    }
+    throw error;
   } finally {
     signal?.removeEventListener("abort", onAbort);
     const leaving = settle("release", { hash });

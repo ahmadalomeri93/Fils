@@ -1055,3 +1055,11 @@ dialog.native-doc-dialog { width: min(calc(100% - 16px), 720px); max-height: 92v
 .ai-journal-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .ai-journal-list li > div { display: grid; gap: 2px; min-width: 0; }
 .ai-journal-list small { color: var(--muted); }
+
+/* الرئيسية: زر «＋ مصروف» وبطاقة البداية للمستخدم الجديد */
+.home-quick { display: grid; margin: 12px 0 4px; }
+.home-quick .primary { min-height: 52px; font-size: 1.05rem; border-radius: 14px; }
+.home-start { display: grid; gap: 8px; margin-top: 12px; }
+.home-start h2 { margin: 0; font-size: 1.1rem; }
+.home-start p { margin: 0; color: var(--muted); line-height: 1.7; }
+.home-start .primary { min-height: 48px; }

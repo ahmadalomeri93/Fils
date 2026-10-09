@@ -126,10 +126,14 @@ export function mountAssistant(root, hooks) {
         <span class="eyebrow">قبل ما تبدأ</span>
         <h2>وين تروح بياناتك؟</h2>
         <ul class="ai-disclosure">
-          <li>المحاسب الذكي يعمل بنموذج Claude من شركة Anthropic. أسئلتك تُرسل لخدمة حوّش على Cloudflare ومنها للنموذج لتوليد الرد.</li>
+          <li>${S.provider === "workers-ai"
+            ? "المحاسب الذكي يعمل بنموذج ذكاء اصطناعي مفتوح يشتغل على خدمة Workers AI من Cloudflare بحسابك. أسئلتك تُرسل لخدمة حوّش على Cloudflare ومنها للنموذج لتوليد الرد. تقول Cloudflare إنها ما تستخدم محتواك لتدريب النماذج، ولا تعلن أنها لا تحتفظ به."
+            : "المحاسب الذكي يعمل بنموذج Claude من شركة Anthropic. أسئلتك تُرسل لخدمة حوّش على Cloudflare ومنها للنموذج لتوليد الرد."}</li>
           <li>النموذج ما يشوف كل بياناتك. التطبيق يرسل فقط الجزء الذي يطلبه لجواب سؤالك، مثل عمليات فترة معيّنة (التاريخ والمبلغ والفئة واسم التاجر) أو الميزانيات أو الالتزامات أو الديون.</li>
           <li>لا يُرسل أبداً: رمز القفل، ملف النسخة الاحتياطية، نصوص الإشعارات الخام، أرقام البطاقات.</li>
-          <li>البحث في الإنترنت يتم بكلمات عامة مثل اسم سهم، بدون بياناتك الشخصية، وتظهر لك المصادر ووقت الجلب.</li>
+          <li>${S.provider === "workers-ai"
+            ? "البحث في الإنترنت غير متاح في هذي النسخة المجانية، فما يجيب لك أسعاراً من النت."
+            : "البحث في الإنترنت يتم بكلمات عامة مثل اسم سهم، بدون بياناتك الشخصية، وتظهر لك المصادر ووقت الجلب."}</li>
           <li>لا يتغير شي في بياناتك إلا بعد ما تشوف معاينة وتضغط «تنفيذ»، وتقدر ترجّع التغيير بزر «تراجع».</li>
           <li>الأرقام يحسبها كود التطبيق لا النموذج، وإذا ظهر رقم لا نقدر نطابقه مع بياناتك أو مع مصدر نعلّمك بتنبيه.</li>
           <li>المحادثة تبقى في ذاكرة الصفحة فقط وتنمسح عند قفل التطبيق. المحفوظ على جهازك: رمز الربط وسجل آخر التغييرات.</li>
@@ -312,7 +316,7 @@ export function mountAssistant(root, hooks) {
           const check = display.text ? checkNumbers(display.text, buildEvidence(S.messages)) : { unmatched: [] };
           S.thread.push({ kind: "assistant", ...display, unmatched: check.unmatched, fetchedAt: display.usedSearch ? formatFetchedAt(result.fetchedAt) : "" });
         }
-        if (Array.isArray(result.warnings) && result.warnings.includes("search_unavailable")) S.thread.push({ kind: "notice", text: "البحث في الإنترنت غير متاح حالياً، فالرد من بياناتك فقط.", warn: true });
+        if (Array.isArray(result.warnings) && result.warnings.includes("search_unavailable") && !S.thread.some((item) => item.kind === "notice" && item.text.startsWith("البحث في الإنترنت غير متاح"))) S.thread.push({ kind: "notice", text: "البحث في الإنترنت غير متاح حالياً، فالرد من بياناتك فقط.", warn: true });
         const calls = reply.content.filter((block) => block?.type === "tool_use");
         if (reply.stop_reason === "tool_use" && calls.length) {
           S.busyLabel = calls.some((block) => AI_WRITE_TOOL_NAMES.has(block.name)) ? "أجهّز الاقتراح" : (STEP_LABELS[calls[0].name] ?? "أراجع بياناتك");
@@ -412,12 +416,13 @@ export function mountAssistant(root, hooks) {
     const status = await client.status();
     S.booting = false;
     if (locked()) return;
+    S.provider = status.ok && status.provider === "workers-ai" ? "workers-ai" : "anthropic";
     if (!status.ok) {
       S.phase = "unavailable";
       S.note = aiErrorMessage(status);
     } else if (!status.configured) {
       S.phase = "unavailable";
-      S.note = "المحاسب الذكي غير مفعّل بعد على الخدمة. يلزم إضافة مفتاح الخدمة وإعدادها في Cloudflare.";
+      S.note = "المحاسب الذكي غير مفعّل بعد على الخدمة. يلزم إضافة رمز المالك في Cloudflare، ومفتاح Claude اختياري.";
     } else if (store.consentVersion < AI_CONSENT_VERSION) S.phase = "consent";
     else if (!tokenUsable(store, nowMs())) { S.phase = "pair"; S.pairError = ""; }
     else S.phase = "chat";
