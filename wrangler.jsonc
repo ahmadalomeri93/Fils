@@ -1,5 +1,5 @@
 // نشر تلقائي على Cloudflare Workers من مجلد dist (ملفات ثابتة) + صندوق استقبال الإشعارات (/api/*) + المحاسب الذكي (/api/ai/*)
-// أسرار المحاسب الذكي (من لوحة Cloudflare أو wrangler secret put، لا تُكتب هنا أبداً): ANTHROPIC_API_KEY و AI_OWNER_CODE
+// أسرار المحاسب الذكي (من لوحة Cloudflare أو wrangler secret put، لا تُكتب هنا أبداً): ANTHROPIC_API_KEY و AI_OWNER_CODE، و BRAVE_API_KEY (اختياري: بحث إنترنت مجاني للنسخة المجانية)
 // مخرج لو أحد قفل الاقتران بتخمينات غلط: غيّر متغير AI_PAIR_RESET (أي نص حتى 64 حرفاً، يفك القفل فقط ولا يبطل أي رمز)، أو دوّر ANTHROPIC_API_KEY أو AI_OWNER_CODE أو AI_TOKEN_EPOCH
 {
   "name": "broken-queen-f0ed",
