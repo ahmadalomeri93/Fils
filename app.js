@@ -1124,8 +1124,11 @@ async function markCommitmentPaid(commitmentId, dueDate) {
   // آخر دفعة للشهر (لو فيه دفعات جزئية، التراجع يشيل آخر وحدة بس)
   let index = -1;
   state.commitmentPayments.forEach((item, i) => { if (item.commitmentId === commitmentId && sameDueMonth(item.dueDate, dueDate) && item.status !== "reversed") index = i; });
-  // مدفوع بالكامل → نفس التراجع القديم. غير مدفوع أو مدفوع جزء → نسأل: كامل ولا جزء؟
-  if (index >= 0 && occurrence?.paid) {
+  // التراجع عن آخر دفعة للشهر (من زر «مدفوع» أو من نافذة الدفع لما يكون الدفع جزئي)
+  const removeLastPayment = () => {
+    let index = -1;
+    state.commitmentPayments.forEach((item, i) => { if (item.commitmentId === commitmentId && sameDueMonth(item.dueDate, dueDate) && item.status !== "reversed") index = i; });
+    if (index < 0) return;
     const [payment] = state.commitmentPayments.splice(index, 1);
     // نرجّع بالضبط اللي انخصم فعلاً، مو مبلغ الالتزام: لو الرصيد كان أقل انقصّ للصفر وما نخترع الباقي
     const restoredFils = paymentCashDeductedFils(payment);
@@ -1141,11 +1144,13 @@ async function markCommitmentPaid(commitmentId, dueDate) {
       if (restoredFils > 0) { payment.cashDeductedFils = again.deductedFils; payment.cashDeducted = again.deductedFils > 0; }
       commit("رجّعت التسجيل");
     } });
-    return;
-  }
+  };
+  // مدفوع بالكامل → نفس التراجع القديم. غير مدفوع أو مدفوع جزء → نسأل: كامل ولا جزء؟
+  if (index >= 0 && occurrence?.paid) { removeLastPayment(); return; }
   const remainingFils = occurrence ? occurrence.amountFils : commitment.amountFils;
-  const choice = await askPayment(commitment, remainingFils, occurrence?.partialPaidFils ?? 0);
+  const choice = await askPayment(commitment, remainingFils, occurrence?.partialPaidFils ?? 0, index >= 0 ? state.commitmentPayments[index].amountFils : 0);
   if (!choice) return;
+  if (choice.undo) { removeLastPayment(); return; }
   const payFils = choice.amountFils;
   const partial = payFils < remainingFils;
   const preview = cashDeduction(state.settings.cashFils, payFils);
@@ -1212,7 +1217,7 @@ function renderCommitments() {
       </div>
       <div class="item-actions">
         <button data-edit-commitment="${escapeHTML(commitment.id)}">تعديل</button>
-        ${commitment.status !== "paused" && markOccurrence ? `<button class="commitment-paid-toggle ${markOccurrence.paid ? "is-paid" : ""}" role="checkbox" aria-checked="${markOccurrence.paid ? "true" : "false"}" aria-label="${markOccurrence.paid ? "إلغاء تسجيل دفع" : "تسجيل الدفع"}: ${escapeHTML(commitment.name)}" data-toggle-commitment-paid="${escapeHTML(commitment.id)}" data-due-date="${escapeHTML(markOccurrence.dueDate)}"><span aria-hidden="true">${markOccurrence.paid ? "✓" : markOccurrence.partialPaidFils ? "◐" : "○"}</span>${markOccurrence.paid ? "مدفوع" : markOccurrence.partialPaidFils ? `دفعت ${escapeHTML(formatMoney(markOccurrence.partialPaidFils))} · باقي ${escapeHTML(formatMoney(markOccurrence.amountFils))}` : "تم الدفع"}</button>` : ""}
+        ${commitment.status !== "paused" && markOccurrence ? `<button class="commitment-paid-toggle ${markOccurrence.paid ? "is-paid" : ""}" role="checkbox" aria-checked="${markOccurrence.paid ? "true" : markOccurrence.partialPaidFils ? "mixed" : "false"}" aria-label="${markOccurrence.paid ? "إلغاء تسجيل دفع" : markOccurrence.partialPaidFils ? `دفعت ${escapeHTML(formatMoney(markOccurrence.partialPaidFils))} وباقي ${escapeHTML(formatMoney(markOccurrence.amountFils))}، تسجيل دفعة أو تراجع` : "تسجيل الدفع"}: ${escapeHTML(commitment.name)}" data-toggle-commitment-paid="${escapeHTML(commitment.id)}" data-due-date="${escapeHTML(markOccurrence.dueDate)}"><span aria-hidden="true">${markOccurrence.paid ? "✓" : markOccurrence.partialPaidFils ? "◐" : "○"}</span>${markOccurrence.paid ? "مدفوع" : markOccurrence.partialPaidFils ? `دفعت ${escapeHTML(formatMoney(markOccurrence.partialPaidFils))} · باقي ${escapeHTML(formatMoney(markOccurrence.amountFils))}` : "تم الدفع"}</button>` : ""}
         <button data-toggle-commitment="${escapeHTML(commitment.id)}">${commitment.status === "paused" ? "إعادة تفعيل" : "إيقاف مؤقت"}</button>
         <button class="delete" data-delete-commitment="${escapeHTML(commitment.id)}">حذف</button>
       </div>
@@ -3304,7 +3309,7 @@ function askConfirm(message, { okLabel = "نعم، كمّل", danger = false, ph
   });
 }
 // «تم الدفع»: كامل المتبقي أو جزء منه. يرجّع { amountFils } أو null لو ألغى
-function askPayment(commitment, remainingFils, alreadyPaidFils = 0) {
+function askPayment(commitment, remainingFils, alreadyPaidFils = 0, lastPaymentFils = 0) {
   const dialog = $("#pay-dialog");
   const input = $("#pay-partial-amount");
   const error = $("#pay-error");
@@ -3314,10 +3319,16 @@ function askPayment(commitment, remainingFils, alreadyPaidFils = 0) {
     : `المبلغ المستحق ${formatMoney(remainingFils)}.`);
   setText("#pay-full", alreadyPaidFils > 0 ? `دفعت الباقي كامل (${formatMoney(remainingFils)})` : `دفعت المبلغ كامل (${formatMoney(remainingFils)})`);
   input.value = "";
+  input.removeAttribute("aria-invalid");
   error.hidden = true;
+  updateMoneyPreviews(dialog);
+  // دفعة جزئية سابقة: نعطيه طريق يتراجع عنها (وإلا ما فيه طريق لتصحيح مبلغ غلط)
+  const undo = $("#pay-undo");
+  undo.hidden = !(alreadyPaidFils > 0 && lastPaymentFils > 0);
+  undo.textContent = `تراجع عن آخر دفعة (${formatMoney(lastPaymentFils)})`;
   return new Promise((resolve) => {
     const done = (value) => {
-      $("#pay-full").onclick = $("#pay-partial").onclick = $("#pay-cancel").onclick = null;
+      $("#pay-full").onclick = $("#pay-partial").onclick = $("#pay-cancel").onclick = undo.onclick = null;
       dialog.onclose = null;
       if (dialog.open) closeDialog(dialog);
       resolve(value);
@@ -3325,11 +3336,13 @@ function askPayment(commitment, remainingFils, alreadyPaidFils = 0) {
     $("#pay-full").onclick = () => done({ amountFils: remainingFils });
     $("#pay-partial").onclick = () => {
       const fils = parseMoney(input.value);
-      if (!fils || fils <= 0) { error.textContent = "اكتب المبلغ اللي دفعته."; error.hidden = false; input.focus(); return; }
-      if (fils > remainingFils) { error.textContent = `المبلغ أكبر من الباقي (${formatMoney(remainingFils)}).`; error.hidden = false; input.focus(); return; }
+      const reject = (message) => { error.textContent = message; error.hidden = false; input.setAttribute("aria-invalid", "true"); input.focus(); };
+      if (!fils || fils <= 0) { reject(!input.value.trim() ? "اكتب المبلغ اللي دفعته." : /^[0٠.,٫\s]*$/.test(input.value) ? "المبلغ لازم يكون أكثر من صفر." : "ما فهمت المبلغ. اكتب رقم مثل 40 أو 25.5."); return; }
+      if (fils > remainingFils) { reject(`المبلغ أكبر من الباقي (${formatMoney(remainingFils)}).`); return; }
       done({ amountFils: fils });
     };
     $("#pay-cancel").onclick = () => done(null);
+    undo.onclick = () => done({ undo: true });
     dialog.onclose = () => done(null);
     openDialog(dialog);
   });

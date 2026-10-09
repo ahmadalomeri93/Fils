@@ -641,11 +641,12 @@
     <p id="pay-summary" class="confirm-message"></p>
     <div class="pay-options">
       <button type="button" class="primary" id="pay-full">دفعت المبلغ كامل</button>
-      <label class="field"><span>أو دفعت جزء منه</span><div class="money-field"><input id="pay-partial-amount" inputmode="decimal" autocomplete="off" placeholder="0.000"><b>د.ك</b></div></label>
+      <label class="field"><span>أو دفعت جزء منه</span><div class="money-field"><input id="pay-partial-amount" inputmode="decimal" autocomplete="off" placeholder="0.000" aria-describedby="pay-error"><b>د.ك</b></div></label>
       <p class="hint warn-hint" id="pay-error" role="alert" hidden></p>
       <button type="button" class="secondary" id="pay-partial">سجّل الجزء المدفوع</button>
+      <button type="button" class="secondary" id="pay-undo" hidden></button>
+      <button type="button" class="ghost" id="pay-cancel">إلغاء</button>
     </div>
-    <div class="dialog-actions single"><button type="button" class="secondary" id="pay-cancel">إلغاء</button></div>
   </dialog>
 
   <dialog id="confirm-dialog" class="confirm-dialog">
