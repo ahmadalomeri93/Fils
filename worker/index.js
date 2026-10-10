@@ -1,6 +1,7 @@
 // صندوق استقبال إشعارات حوّش: Worker + Durable Object على حساب Cloudflare حقك.
 // الملفات الثابتة (dist) تُقدَّم قبل هذا الكود؛ هنا فقط مسارات /api/*.
 import { HttpError, InboxStore, KEY_PATTERN, MAX_BODY_BYTES, bearerKey } from "./inbox-core.js";
+import { handleStockQuotes } from "./stocks.js";
 import { handleAi } from "./ai.js";
 
 // حارس «المحاسب الذكي» (Durable Object) يُصدَّر من نقطة الدخول ليراه Cloudflare
@@ -86,6 +87,8 @@ async function ask(env, op, payload) {
 export async function handleRequest(request, env, deps = {}) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } });
+  // أسعار الأسهم: بيانات عامة، ما تحتاج مفتاح
+  if (url.pathname === "/api/stocks/quotes") return handleStockQuotes(request, deps);
   // مسارات المحاسب الذكي لها CORS خاص (قائمة أصول، مو "*") فتنفصل قبل مسارات الاستقبال
   if (url.pathname === "/api/ai" || url.pathname.startsWith("/api/ai/")) return handleAi(request, env, deps);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
