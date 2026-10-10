@@ -75,4 +75,34 @@ jobs:
               sys.exit(1)
           code, data = call("/v1/bundleIds?filter%5Bidentifier%5D=com.yusfco.hawwesh")
           print("bundle id com.yusfco.hawwesh registered: HTTP %d, matches=%d" % (code, len(data.get("data", []))))
+
+          # حالة TestFlight: البناءات، والمجموعات، ومين فيها (قراءة فقط؛ الإيميل يُطبع مخفي جزئياً)
+          def mask(email):
+              name, _, host = (email or "").partition("@")
+              return (name[:2] + "***@" + host) if host else "?"
+          try:
+              code, apps = call("/v1/apps?filter%5BbundleId%5D=com.yusfco.hawwesh")
+              app_id = apps["data"][0]["id"]
+              code, builds = call("/v1/builds?filter%5Bapp%5D=" + app_id + "&sort=-uploadedDate&limit=10&include=preReleaseVersion")
+              pre = {i["id"]: i["attributes"].get("version") for i in builds.get("included", []) if i["type"] == "preReleaseVersions"}
+              print("builds (newest first): HTTP %d" % code)
+              for b in builds.get("data", []):
+                  a = b["attributes"]
+                  pid = (b.get("relationships", {}).get("preReleaseVersion", {}).get("data") or {}).get("id")
+                  c2, det = call("/v1/builds/" + b["id"] + "/buildBetaDetail")
+                  d = (det.get("data") or {}).get("attributes", {}) if c2 == 200 else {}
+                  print("  version %s build %s | state=%s | uploaded=%s | expired=%s | internal=%s | external=%s" % (
+                      pre.get(pid), a.get("version"), a.get("processingState"), a.get("uploadedDate"), a.get("expired"),
+                      d.get("internalBuildState"), d.get("externalBuildState")))
+              code, groups = call("/v1/apps/" + app_id + "/betaGroups")
+              print("beta groups: HTTP %d, count=%d" % (code, len(groups.get("data", []))))
+              for g in groups.get("data", []):
+                  ga = g["attributes"]
+                  c3, gb = call("/v1/betaGroups/" + g["id"] + "/builds")
+                  c4, gt = call("/v1/betaGroups/" + g["id"] + "/betaTesters")
+                  builds_in = [x["attributes"].get("version") for x in gb.get("data", [])]
+                  testers = ["%s (%s, %s)" % (mask(t["attributes"].get("email")), t["attributes"].get("inviteType"), t["attributes"].get("state")) for t in gt.get("data", [])]
+                  print("  group %r internal=%s all-builds=%s | builds in group=%s | testers=%s" % (ga.get("name"), ga.get("isInternalGroup"), ga.get("hasAccessToAllBuilds"), builds_in, testers))
+          except Exception as e:
+              print("TestFlight status could not be read: %s: %s" % (type(e).__name__, e))
           PY
