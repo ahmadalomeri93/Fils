@@ -463,10 +463,16 @@ async function refreshStockPrices() {
   const button = $("#stock-refresh");
   if (button) { button.disabled = true; button.textContent = "جاري التحديث…"; }
   try {
+    // الخادم يقبل 40 رمز بالطلب: اللي بعدها نقولك إنه ما انحدّث بدل ما نتجاهله بصمت
+    const requested = codes.slice(0, 40);
+    const skipped = codes.slice(40);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
-    const response = await fetch(`${INBOX_BASE}/api/stocks/quotes?codes=${encodeURIComponent(codes.slice(0, 40).join(","))}`, { signal: controller.signal }).finally(() => clearTimeout(timer));
-    const data = await response.json().catch(() => null);
+    let response; let data;
+    try {
+      response = await fetch(`${INBOX_BASE}/api/stocks/quotes?codes=${encodeURIComponent(requested.join(","))}`, { signal: controller.signal });
+      data = await response.json().catch(() => null); // الإلغاء بعد الـ15 ثانية يقطع قراءة الجسم كمان
+    } finally { clearTimeout(timer); }
     if (!response.ok || !data?.ok) { toast("ما قدرت أجيب الأسعار الحين. جرّب بعد شوي."); return; }
     // السعر السابق نحفظه للتراجع؛ والسقف نفسه سقف sanitizeState (فوقه يُحذف السهم عند التحميل)
     const before = new Map(state.stockHoldings.map((holding) => [holding.id, { currentPriceTenths: holding.currentPriceTenths, priceUpdatedAt: holding.priceUpdatedAt, priceSource: holding.priceSource }]));
@@ -481,8 +487,10 @@ async function refreshStockPrices() {
       holding.priceSource = "market";
       updated += 1;
     }
-    const missing = Array.isArray(data.missing) && data.missing.length ? ` · ما لقيت: ${data.missing.slice(0, 6).join("، ")}` : "";
-    commit(updated ? `حدّثت أسعار ${countLabel(updated, "stock")}${missing}` : `ما لقيت أسعار جديدة${missing}`, updated ? { undo: () => {
+    const notFound = [...(Array.isArray(data.missing) ? data.missing : []), ...skipped];
+    const missing = notFound.length ? ` · ما لقيت: ${notFound.slice(0, 6).join("، ")}` : "";
+    // صياغة بالأرقام (2 من 3) عشان ما نغلط بمثنى ومفرد العربي
+    commit(updated ? `حدّثت أسعار الأسهم (${updated} من ${state.stockHoldings.length})${missing}` : `ما لقيت أسعار جديدة${missing}`, updated ? { undo: () => {
       for (const holding of state.stockHoldings) {
         const old = before.get(holding.id);
         if (!old) continue;
@@ -1394,12 +1402,14 @@ function submitStock(event) {
   const id = $("#stock-id").value;
   const existing = state.stockHoldings.find((item) => item.id === id);
   const now = new Date().toISOString();
+  // تعديل العدد أو الرسوم بدون لمس السعر لا يغيّر مصدر السعر ولا وقته (يبقى «من البورصة» بوقت الجلب الحقيقي)
+  const keepMarketPrice = existing?.priceSource === "market" && existing.currentPriceTenths === currentPriceTenths;
   const record = {
     id: existing?.id ?? createId(), securityCode: security.code, quantity, purchasePriceTenths, feesFils,
-    currentPriceTenths, priceUpdatedAt: now, createdAt: existing?.createdAt ?? now
+    currentPriceTenths, priceUpdatedAt: keepMarketPrice ? existing.priceUpdatedAt : now, createdAt: existing?.createdAt ?? now
   };
-  // السعر هنا مكتوب بيدك: ما يظل موسوم «من البورصة» لو كان جاي من «تحديث الأسعار»
-  if (existing) { Object.assign(existing, record); delete existing.priceSource; } else state.stockHoldings.push(record);
+  // السعر هنا مكتوب بيدك: ما يظل موسوم «من البورصة» إلا لو ما غيّرته
+  if (existing) { Object.assign(existing, record); if (!keepMarketPrice) delete existing.priceSource; } else state.stockHoldings.push(record);
   saveState(); renderAll(); closeDialog($("#stock-dialog"));
   toast(existing ? `تم تحديث ${security.name}` : `تمت إضافة ${security.name}`);
 }
