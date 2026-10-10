@@ -112,7 +112,7 @@ jobs:
           xcodebuild -project Hawwesh.xcodeproj -scheme Hawwesh -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/Hawwesh.xcarchive \
             APPLE_TEAM_ID=$APPLE_TEAM_ID DEVELOPMENT_TEAM=$APPLE_TEAM_ID CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Distribution" \
+            CODE_SIGNING_ALLOWED=NO \
             $AUTH archive | tail -20
           cat > build/export.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
