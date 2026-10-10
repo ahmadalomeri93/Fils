@@ -41,6 +41,7 @@ jobs:
         run: |
           app="$(find ios/build/dd -type d -name 'Hawwesh.app' | head -1)"
           test -n "$app" || { echo "::error::Hawwesh.app was not built"; exit 1; }
+          echo "Top level of the app bundle:"; ls -1 "$app" | head -60
           test -f "$app/PrivacyInfo.xcprivacy" || { echo "::error::PrivacyInfo.xcprivacy is not inside the app"; exit 1; }
           plutil -lint "$app/PrivacyInfo.xcprivacy"
           test -f "$app/web/index.html" || { echo "::error::web/index.html is not inside the app"; exit 1; }
