@@ -39,7 +39,7 @@ jobs:
               os.environ["HAS_LONG_KEY_ID"], os.environ["HAS_LONG_ISSUER"], os.environ["HAS_LONG_P8"]))
           print("key id: length=%d (Apple key ids have 10), only A-Z0-9=%s" % (len(key_id), bool(re.fullmatch(r"[A-Z0-9]+", key_id))))
           print("issuer id: length=%d (a UUID has 36), looks like UUID=%s" % (len(issuer), bool(re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", issuer))))
-          print("p8: begin line=%s end line=%s base64 chars=%d (a key has 184)" % ("BEGIN PRIVATE KEY" in raw, "END PRIVATE KEY" in raw, len(body)))
+          print("p8: begin line=%s end line=%s base64 chars=%d" % ("BEGIN PRIVATE KEY" in raw, "END PRIVATE KEY" in raw, len(body)))
 
           pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(body, 64)) + "\n-----END PRIVATE KEY-----\n"
           kf = tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False); kf.write(pem); kf.close()
