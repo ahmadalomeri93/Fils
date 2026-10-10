@@ -656,19 +656,6 @@
     <div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">إلغاء</button><button type="button" class="primary" id="confirm-ok">نعم، كمّل</button></div>
   </dialog>
 
-  <dialog id="pin-dialog">
-    <form id="pin-form" novalidate>
-      <div class="dialog-heading"><h2 id="pin-title">تفعيل القفل</h2><button type="button" class="close-dialog" aria-label="إغلاق">×</button></div>
-      <label class="field" id="pin-current-field" hidden><span>الرمز الحالي</span><input id="pin-current" type="password" inputmode="numeric" autocomplete="off" maxlength="8"></label>
-      <div id="pin-new-fields">
-        <label class="field"><span>رمز جديد (4 إلى 8 أرقام)</span><input id="pin-new" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8"></label>
-        <label class="field"><span>أعد كتابة الرمز</span><input id="pin-confirm" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8"></label>
-      </div>
-      <p class="form-error" id="pin-error" role="alert"></p>
-      <div class="dialog-actions"><button type="button" class="secondary close-dialog">إلغاء</button><button type="submit" class="primary">حفظ</button></div>
-    </form>
-  </dialog>
-
   <dialog id="onboarding-dialog" class="onboarding-dialog">
     <div id="onboarding-root"></div>
   </dialog>
@@ -689,8 +676,8 @@
       <p class="form-error" id="settings-error" role="alert"></p>
       <section class="data-actions web-only" id="update-actions"><h3>النسخة والتحديث</h3><p>اضغط الزر وحوّش يشوف إذا في نسخة أحدث وينزّلها. بياناتك على الجهاز ما تتغير.</p><button type="button" class="secondary update-button" id="update-app">تحديث التطبيق</button><p class="hint update-status" id="update-status" role="status" aria-live="polite">جاري قراءة النسخة…</p></section>
       <section class="data-actions"><h3>بياناتك</h3><p>تُحفظ على هذا الجهاز فقط. صدّر نسخة احتياطية قبل <span class="web-only">مسح Safari</span><span class="native-only">حذف التطبيق</span> أو تغيير الجهاز. <a href="privacy.html" target="_blank" rel="noopener">اقرأ سياسة الخصوصية</a>.</p><div class="row wrap"><button type="button" class="secondary" id="export-data">تصدير نسخة</button><label class="secondary file-button">استيراد نسخة<input type="file" id="import-data" accept="application/json" hidden></label><button type="button" class="danger" id="reset-data">مسح جميع البيانات</button><button type="button" class="danger" id="reset-data-hard">مسح نهائي بدون نسخة رجوع</button></div><p class="hint">«مسح جميع البيانات» يحفظ نسخة رجوع واحدة على الجهاز. «مسح نهائي» يمسحها هي كمان، فما يبقى شي يُسترجع.</p></section>
-      <section class="data-actions" id="security-actions"><h3>الحماية</h3><p><strong id="lock-status">القفل غير مفعّل</strong><br>القفل يمنع فتح التطبيق بدون الرمز، لكنه لا يشفّر البيانات المخزنة <span class="web-only">في المتصفح</span><span class="native-only">على الجهاز</span>. ما فيه استرجاع للرمز لو نسيته.</p><div class="row wrap"><button type="button" class="secondary" id="lock-setup">تفعيل القفل</button><button type="button" class="secondary" id="lock-now" hidden>قفل الحين</button><button type="button" class="danger" id="lock-disable" hidden>إيقاف القفل</button><button type="button" class="secondary" id="restore-snapshot" hidden>استرجاع النسخة التلقائية</button></div></section>
-      <section class="data-actions native-only" id="native-security"><h3 id="biometric-title">فتح التطبيق بـ Face ID</h3><label class="switch-row"><span id="biometric-label">استخدم Face ID مع الرمز</span><input type="checkbox" role="switch" id="biometric-toggle"></label><p class="hint" id="biometric-hint" role="status"></p></section>
+      <section class="data-actions" id="security-actions"><h3>الحماية</h3><p><strong id="lock-status">القفل غير مفعّل</strong><br><span class="native-only">القفل يكون بـ Face ID أو Touch ID بس، وتشغّله من الخيار تحت. يمنع فتح التطبيق، لكنه لا يشفّر البيانات المخزنة على الجهاز.</span><span class="web-only">القفل بـ Face ID متاح في تطبيق حوّش على الآيفون فقط.</span></p><div class="row wrap"><button type="button" class="secondary" id="lock-now" hidden>قفل الحين</button><button type="button" class="secondary" id="restore-snapshot" hidden>استرجاع النسخة التلقائية</button></div></section>
+      <section class="data-actions native-only" id="native-security"><h3 id="biometric-title">قفل التطبيق بـ Face ID</h3><label class="switch-row"><span id="biometric-label">اطلب Face ID لفتح حوّش</span><input type="checkbox" role="switch" id="biometric-toggle"></label><p class="hint" id="biometric-hint" role="status"></p></section>
       <section class="data-actions native-only" id="native-reminders"><h3>التذكيرات</h3><label class="switch-row"><span>ذكّرني بالأقساط والالتزامات والمعاش</span><input type="checkbox" role="switch" id="reminders-toggle"></label><p class="hint" id="reminders-hint" role="status"></p><button type="button" class="secondary small" id="open-ios-settings" hidden>فتح إعدادات الآيفون</button></section>
       <section class="data-actions web-only" id="bank-shortcut-settings"><h3>ربط الإشعارات والرسائل</h3><p>خلّ الآيفون يجمع إشعارات عملياتك أو رسائل SMS في ملف يقرأه حوّش.</p><button type="button" class="secondary web-only" data-action="bank-automation-guide">عرض خطوات الربط</button>
         <div class="bank-fields"><p><strong>حقول الإشعار في الاختصار:</strong> <span id="bank-field-summary"></span><br><small>حوّش يفهم الإشعار بأي ترتيب. غيّر هنا فقط إذا اخترت الحقول بنفسك في الاختصار.</small></p>
@@ -772,11 +759,10 @@
     <form id="lock-form" class="lock-card">
       <img src="icons/fils-mark.svg" width="64" height="64" alt="">
       <h1>حوّش مقفل</h1>
-      <label class="field"><span>اكتب الرمز</span><input id="lock-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8"></label>
       <p class="form-error" id="lock-error" role="alert"></p>
-      <button type="submit" class="primary" id="lock-submit">فتح</button>
-      <button type="button" class="secondary" id="lock-biometric" hidden>فتح بـ Face ID</button>
-      <button type="button" class="ghost small" id="lock-forgot">نسيت الرمز</button>
+      <button type="button" class="primary" id="lock-biometric">فتح بـ Face ID</button>
+      <button type="button" class="secondary" id="lock-ios-settings" hidden>فتح إعدادات الآيفون</button>
+      <button type="button" class="ghost small" id="lock-forgot">ما أقدر أفتح؟ امسح البيانات</button>
     </form>
   </div>
 
