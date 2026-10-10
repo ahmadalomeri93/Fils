@@ -21,7 +21,11 @@ targets:
       - path: Fils
         excludes:
           - "native-bridge.js"
+          - "PrivacyInfo.xcprivacy"
       - path: Fils/native-bridge.js
+        buildPhase: resources
+      # Apple يطلب إعلان استخدام UserDefaults (CA92.1) وإلا يرفض الرفع لـApp Store Connect
+      - path: Fils/PrivacyInfo.xcprivacy
         buildPhase: resources
       - path: ../dist
         name: web
