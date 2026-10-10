@@ -15,7 +15,7 @@ jobs:
       run:
         shell: bash
     env:
-      HAS_APPLE_KEY: ${{ secrets.ASC_KEY_ID != '' }}
+      HAS_APPLE_KEY: ${{ secrets.ASC_KEY_ID != '' || secrets.APP_STORE_CONNECT_KEY_ID != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -81,10 +81,12 @@ jobs:
       - name: Archive and upload to TestFlight
         if: env.HAS_APPLE_KEY == 'true'
         env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # يقبل الاسمين: ASC_* أو APP_STORE_CONNECT_* (حسب ما انحفظت الأسرار)
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID || secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 || secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          # رقم الفريق مو سر (يطلع بصفحة المطور)، فله قيمة افتراضية
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID || 'J7T6VDASDB' }}
         run: |
           mkdir -p ~/private_keys
           echo "$ASC_KEY_P8" > ~/private_keys/AuthKey_$ASC_KEY_ID.p8
