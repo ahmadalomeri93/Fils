@@ -94,7 +94,19 @@ jobs:
           test -n "$ASC_KEY_ID" && test -n "$ASC_ISSUER_ID" && test -n "$ASC_KEY_P8" || { echo "::error::App Store Connect secrets are missing or empty"; exit 1; }
           mkdir -p "$HOME/private_keys"
           KEY_PATH="$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
-          printf '%s\n' "$ASC_KEY_P8" > "$KEY_PATH"
+          # المفتاح ممكن ينحفظ PEM عادي، أو بسطر واحد (مسافات أو \n حرفية)، أو base64. نعيد بناءه PEM صحيح
+          python3 - "$KEY_PATH" <<'PY'
+          import base64, os, re, sys, textwrap
+          raw = os.environ.get("ASC_KEY_P8", "").replace("\\n", "\n")
+          if "BEGIN PRIVATE KEY" not in raw:
+              try: raw = base64.b64decode(re.sub(r"\s+", "", raw)).decode()
+              except Exception: raw = ""
+          m = re.search(r"-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----", raw, re.S)
+          if not m: sys.exit("::error::The App Store Connect private key secret is not a .p8 file (no BEGIN/END PRIVATE KEY)")
+          body = re.sub(r"[^A-Za-z0-9+/=]", "", m.group(1))
+          open(sys.argv[1], "w").write("-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(body, 64)) + "\n-----END PRIVATE KEY-----\n")
+          PY
+          echo "::notice::.p8 key looks valid ($(wc -l < "$KEY_PATH" | tr -d ' ') lines)"
           cd ios
           AUTH="-allowProvisioningUpdates -authenticationKeyPath $KEY_PATH -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
           xcodebuild -project Hawwesh.xcodeproj -scheme Hawwesh -configuration Release \
