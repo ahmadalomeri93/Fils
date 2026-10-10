@@ -3,8 +3,7 @@ import { SECTOR_OPTIONS, mountCheckup } from "./checkup.js";
 import { mountOnboarding } from "./onboarding.js";
 import { EXPENSE_CATEGORIES, budgetReport, categoryNudges, mountSpending, monthKeyOf } from "./spending.js";
 import { fundGoals, mountSalaryPlan, salaryDue } from "./salary-plan.js";
-import { PIN_PATTERN, backupStatus, createLockRecord, cryptoAvailable, describeBackupAge, hasMeaningfulData, registerFailure, registerSuccess,
-  remainingLockMs, sanitizeLockRecord, shouldRelock, verifyPin } from "./safety.js";
+import { FACE_LOCK_RECORD, backupStatus, describeBackupAge, hasMeaningfulData, isLegacyPinRecord, sanitizeLockRecord, shouldRelock } from "./safety.js";
 import { GOLD_PRICE_URL, goldSummary, mountGold, priceFromApi, sanitizeGold } from "./gold.js";
 import { decideUpdate, installedVersion, remoteVersion, staticCacheNames, versionLabel } from "./app-update.js";
 import { NOTIFICATION_REASONS, NOTIFICATION_TYPE_LABELS, isOwnTransfer, notificationFingerprints, parseBankNotification, splitBankMessages, splitStamp, timeFromCompact, BANK_FIELDS, DEFAULT_FIELD_ORDER } from "./bank-notifications.js";
@@ -376,7 +375,10 @@ function loadState() {
    أي فشل هنا ما يوقف التطبيق: يكمل بدون ميزات الآيفون. */
 const nativeHooks = {
   getState: () => state,
-  hasPin: () => Boolean(lockRecord),
+  hasLock: () => lockActive(),
+  setLock: (on) => writeLockRecord(on ? { ...FACE_LOCK_RECORD } : null),
+  wipe: () => wipeAllData(),
+  lockStatusChanged: () => native?.ui?.renderLock(),
   isLocked: () => lockedNow,
   lock: () => lockApp(),
   unlock: () => unlockApp(),
@@ -3363,16 +3365,32 @@ const SNAPSHOT_KEY = "fils-state-v1-prev";
 let lockRecord = null;
 let lockedNow = false;
 let hiddenAtMs = null;
-let lockTimer = null;
+let legacyPinMigrated = false;
+
+/* القفل بـ Face ID فقط وداخل تطبيق الآيفون فقط: في الموقع ما فيه بصمة، فما فيه قفل */
+const lockActive = () => IS_NATIVE && Boolean(native) && Boolean(lockRecord);
 
 function readLockRecord() {
-  try { return sanitizeLockRecord(JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null")); } catch { return null; }
+  try {
+    const raw = JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null");
+    const record = sanitizeLockRecord(raw);
+    // رمز قديم: نحذف الرمز نفسه ونخلي القفل (صار بالبصمة) داخل التطبيق، وفي الموقع نشيله
+    if (isLegacyPinRecord(raw)) {
+      legacyPinMigrated = true;
+      const next = IS_NATIVE ? record : null;
+      if (next) localStorage.setItem(LOCK_KEY, JSON.stringify(next)); else localStorage.removeItem(LOCK_KEY);
+      native?.lockChanged(next);
+      return next;
+    }
+    return IS_NATIVE ? record : null;
+  } catch { return null; }
 }
 function writeLockRecord(record) {
   lockRecord = record;
   try {
     if (record) localStorage.setItem(LOCK_KEY, JSON.stringify(record)); else localStorage.removeItem(LOCK_KEY);
     native?.lockChanged(record);
+    renderSecuritySettings();
     return true;
   } catch (error) { console.warn("Lock storage unavailable", error); return false; }
 }
@@ -3413,36 +3431,33 @@ function renderBackupReminder() {
 }
 
 function renderSecuritySettings() {
-  const enabled = Boolean(lockRecord);
-  setText("#lock-status", enabled ? "القفل مفعّل" : "القفل غير مفعّل");
-  $("#lock-setup").textContent = enabled ? "تغيير الرمز" : "تفعيل القفل";
-  $("#lock-disable").hidden = !enabled;
-  $("#lock-now").hidden = !enabled;
+  const enabled = lockActive();
+  const status = $("#lock-status");
+  if (status) status.textContent = IS_NATIVE ? (enabled ? "القفل بـ Face ID مفعّل" : "القفل غير مفعّل") : "القفل متاح في تطبيق الآيفون فقط";
+  const lockNow = $("#lock-now");
+  if (lockNow) lockNow.hidden = !enabled;
   const snapshot = readSnapshot();
   $("#restore-snapshot").hidden = !snapshot;
   if (snapshot) $("#restore-snapshot").textContent = `استرجاع نسخة ما قبل ${SNAPSHOT_LABELS[snapshot.reason] ?? "الاستيراد"}`;
   native?.renderSettings();
 }
 
-/* ----- شاشة القفل ----- */
+/* ----- شاشة القفل (Face ID فقط) ----- */
 function lockApp() {
-  if (!lockRecord || lockedNow) return;
+  if (!lockActive() || lockedNow) return;
   lockedNow = true;
   assistantController?.onLock();
   document.querySelectorAll("dialog[open]").forEach((dialog) => closeDialog(dialog));
   document.body.classList.add("is-locked");
   $("#lock-screen").hidden = false;
-  $("#lock-pin").value = "";
   $("#lock-error").textContent = "";
-  updateLockCountdown();
-  setTimeout(() => $("#lock-pin").focus(), 50);
+  native?.ui?.renderLock();
 }
 function unlockApp() {
   lockedNow = false;
   document.body.classList.remove("is-locked", "is-private");
   $("#lock-screen").hidden = true;
-  $("#lock-pin").value = "";
-  clearInterval(lockTimer);
+  $("#lock-error").textContent = "";
   renderBackupReminder();
   renderNudges();
   refreshAssistantView();
@@ -3453,88 +3468,21 @@ function unlockApp() {
   }
   syncInbox();
 }
-function updateLockCountdown() {
-  clearInterval(lockTimer);
-  const tick = () => {
-    const left = remainingLockMs(lockRecord, Date.now());
-    $("#lock-submit").disabled = left > 0;
-    if (left > 0) $("#lock-error").textContent = `محاولات كثيرة. جرّب بعد ${Math.ceil(left / 1000).toLocaleString("ar-KW-u-nu-latn")} ثانية.`;
-    else { if ($("#lock-error").textContent.startsWith("محاولات")) $("#lock-error").textContent = ""; clearInterval(lockTimer); }
-  };
-  tick();
-  if (remainingLockMs(lockRecord, Date.now()) > 0) lockTimer = setInterval(tick, 1000);
-}
-async function submitLock(event) {
-  event.preventDefault();
-  if (remainingLockMs(lockRecord, Date.now()) > 0) return;
-  const pin = $("#lock-pin").value.trim();
-  if (await verifyPin(pin, lockRecord)) { writeLockRecord(registerSuccess(lockRecord)); unlockApp(); return; }
-  writeLockRecord(registerFailure(lockRecord, Date.now()));
-  $("#lock-pin").value = "";
-  $("#lock-error").textContent = "الرمز غير صحيح.";
-  updateLockCountdown();
-}
-async function forgotPin() {
-  // F38: ضغطتين كانت تكفي لمسح كل شي؛ الحين لازم تنكتب «امسح» والتنبيه واضح لمن ما عنده ملف نسخة
-  if (!(await askConfirm("ما فيه طريقة لاسترجاع الرمز. نمسح كل بيانات حوّش من هذا الجهاز (مع نسخة الرجوع التلقائية) ونفتح التطبيق بدون قفل. إذا ما عندك ملف نسخة احتياطية مصدّر، بياناتك تروح نهائياً. نكمل؟", { okLabel: "امسح وافتح", danger: true, phrase: "امسح" }))) return;
+/* مسح كل شي من الجهاز: نفس شبكة الأمان القديمة لـ«نسيت الرمز»، يُستخدم إذا Face ID انشال من الجهاز */
+function wipeAllData() {
   writeLockRecord(null);
-  // The automatic snapshot would otherwise restore everything without the PIN.
+  // النسخة التلقائية وسجل المحاسب الذكي فيهم قيم مالية: ينمسحون حتى ما يصيرون طريقاً حول القفل
   try { localStorage.removeItem(SNAPSHOT_KEY); } catch { /* storage unavailable */ }
-  // سجل تراجع المحاسب الذكي فيه قيم مالية: يُمسح مع المسح الكامل حتى لا يصير طريقاً حول الرمز
   clearAiStore(); assistantController?.wipe();
   state = defaultState();
   state.ui.initialPortfolioApplied = true;
   try { localStorage.removeItem(STORAGE_KEY); storageAvailable = true; } catch { storageAvailable = false; }
   saveState(); unlockApp(); renderAll({ investmentInputs: true }); toast("تم المسح. تقدر تستورد نسخة احتياطية من الإعدادات.");
-  // الترحيب يفتح مباشرة بدل ما ينتظر إعادة التحميل (F38)
   setTimeout(openOnboarding, 350);
 }
-
-/* ----- ضبط الرمز ----- */
-let pinMode = "set";
-function openPinDialog(mode) {
-  pinMode = mode;
-  $("#pin-form").reset();
-  $("#pin-error").textContent = "";
-  $("#pin-current-field").hidden = mode === "set";
-  $("#pin-new-fields").hidden = mode === "disable";
-  setText("#pin-title", mode === "disable" ? "إيقاف القفل" : mode === "change" ? "تغيير الرمز" : "تفعيل القفل");
-  if ($("#settings-dialog").open) closeDialog($("#settings-dialog"));
-  openDialog($("#pin-dialog"));
-}
-async function submitPin(event) {
-  event.preventDefault();
-  const error = $("#pin-error");
-  if (pinMode !== "set") {
-    // إيقاف القفل وتغييره كانا بلا حد للمحاولات، فيمكن تخمين الرمز بلا عقوبة (F47)
-    const waiting = remainingLockMs(lockRecord, Date.now());
-    if (waiting > 0) { error.textContent = `محاولات كثيرة. جرّب بعد ${Math.ceil(waiting / 1000).toLocaleString("ar-KW-u-nu-latn")} ثانية.`; return; }
-    if (!(await verifyPin($("#pin-current").value.trim(), lockRecord))) {
-      writeLockRecord(registerFailure(lockRecord, Date.now()));
-      $("#pin-current").value = "";
-      const left = remainingLockMs(lockRecord, Date.now());
-      error.textContent = left > 0
-        ? `الرمز الحالي غير صحيح. محاولات كثيرة — جرّب بعد ${Math.ceil(left / 1000).toLocaleString("ar-KW-u-nu-latn")} ثانية.`
-        : "الرمز الحالي غير صحيح.";
-      return;
-    }
-    writeLockRecord(registerSuccess(lockRecord));
-  }
-  if (pinMode === "disable") { writeLockRecord(null); closeDialog($("#pin-dialog")); renderSecuritySettings(); toast("تم إيقاف القفل"); return; }
-  const next = $("#pin-new").value.trim();
-  if (!PIN_PATTERN.test(normalizeDigits(next))) { error.textContent = "الرمز من 4 إلى 8 أرقام فقط."; return; }
-  if (normalizeDigits(next) !== normalizeDigits($("#pin-confirm").value.trim())) { error.textContent = "الرمزان غير متطابقين."; return; }
-  if (!cryptoAvailable()) { error.textContent = IS_NATIVE ? "القفل ما يشتغل على هالجهاز." : "المتصفح لا يدعم القفل هنا."; return; }
-  const changing = Boolean(lockRecord);
-  const previousRecord = lockRecord;
-  // التخزين المحظور: «تم تفعيل القفل» كانت تطلع والرمز ما ينحفظ، فيفتح التطبيق بدون قفل بعد إعادة التحميل (F11)
-  if (!writeLockRecord(await createLockRecord(next))) {
-    lockRecord = previousRecord;
-    error.textContent = "ما قدرت أحفظ الرمز على هذا الجهاز (التخزين محظور أو ممتلئ)، فالقفل ما راح يشتغل. " + (IS_NATIVE ? "تأكد إن في مساحة فاضية على الجهاز وجرّب مرة ثانية." : "افتح حوّش في Safari العادي وجرّب مرة ثانية.");
-    return;
-  }
-  closeDialog($("#pin-dialog")); renderSecuritySettings();
-  toast(changing ? "تم تغيير الرمز" : "تم تفعيل القفل");
+async function forgetLock() {
+  if (!(await askConfirm("بدون Face ID ما فيه طريقة تفتح بياناتك. نمسح كل بيانات حوّش من هذا الجهاز ونفتح التطبيق بدون قفل. إذا ما عندك ملف نسخة احتياطية مصدّر، بياناتك تروح نهائياً. نكمل؟", { okLabel: "امسح وافتح", danger: true, phrase: "امسح" }))) return;
+  wipeAllData();
 }
 
 function setupSafetyEvents() {
@@ -3543,11 +3491,8 @@ function setupSafetyEvents() {
   // حدث close يوصل متأخر (task): لو انفتح تأكيد ثاني بعده مباشرة (مثل «ما قدرت أحفظ نسخة رجوع»)
   // كان يلغيه بصمت فما يشوف المستخدم أي رسالة. نتجاهله إذا النافذة مفتوحة من جديد.
   $("#confirm-dialog").addEventListener("close", () => { if (!$("#confirm-dialog").open) settleConfirm(false); });
-  $("#lock-form").addEventListener("submit", submitLock);
-  $("#lock-forgot").addEventListener("click", forgotPin);
-  $("#pin-form").addEventListener("submit", submitPin);
-  $("#lock-setup").addEventListener("click", () => openPinDialog(lockRecord ? "change" : "set"));
-  $("#lock-disable").addEventListener("click", () => openPinDialog("disable"));
+  $("#lock-form").addEventListener("submit", (event) => event.preventDefault());
+  $("#lock-forgot").addEventListener("click", forgetLock);
   $("#lock-now").addEventListener("click", () => { closeDialog($("#settings-dialog")); lockApp(); });
   $("#restore-snapshot").addEventListener("click", restoreSnapshot);
   $("#backup-export").addEventListener("click", exportData);
@@ -3559,11 +3504,11 @@ function setupSafetyEvents() {
     if (document.visibilityState === "hidden") {
       hiddenAtMs = Date.now();
       // صورة مبدّل التطبيقات تُلتقط بعد الخروج: نضبّب الأرقام إذا كان القفل مفعّلاً (F48)
-      if (lockRecord) document.body.classList.add("is-private");
+      if (lockActive()) document.body.classList.add("is-private");
       return;
     }
     document.body.classList.remove("is-private");
-    if (lockRecord && shouldRelock({ hiddenAtMs, nowMs: Date.now() })) lockApp();
+    if (lockActive() && shouldRelock({ hiddenAtMs, nowMs: Date.now() })) lockApp();
     renderBackupReminder();
   });
 }
@@ -4050,10 +3995,10 @@ function initialize() {
   $("#loan-type").innerHTML = debtTypes.map((type) => `<option value="${escapeHTML(type)}">${escapeHTML(type)}</option>`).join("");
   updateCommitmentCategoryFilterOptions();
   bindEvents(); bindInboxEvents(); renderBankFieldOrder(); setupInstall(); renderAll({ investmentInputs: true }); captureFinancialSnapshot();
-  if (lockRecord) lockApp();
+  if (lockActive()) lockApp();
   const linkHandled = handlePortfolioLink() || handleBankAutomationLink();
   if (!linkHandled && !lockedNow) switchView(location.hash.slice(1) || "dashboard", false);
-  if (!lockRecord && !linkHandled && !state.ui.onboarded && state.settings.incomeFils === 0) setTimeout(openOnboarding, 350);
+  if (!lockActive() && !linkHandled && !state.ui.onboarded && state.settings.incomeFils === 0) setTimeout(openOnboarding, 350);
   renderStorageWarning();
   if (!storageAvailable) toast("التخزين المحلي غير متاح؛ البيانات لن تستمر بعد إغلاق الصفحة.");
   navigator.storage?.persist?.().catch(() => {});
@@ -4072,6 +4017,7 @@ function startNative() {
   if (!native) return;
   native.start().catch((error) => console.warn("Native start failed", error));
   if (nativeRestored) toast("رجّعنا بياناتك من نسخة حفظها التطبيق على جهازك.");
+  if (legacyPinMigrated) toast("القفل صار بـ Face ID بدل الرمز.");
 }
 
 initialize();

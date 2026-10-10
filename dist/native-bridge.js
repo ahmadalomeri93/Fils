@@ -32,7 +32,7 @@ export const MAX_PENDING = 60;
 const MONTH_NAMES = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 const BACKUP_TITLE = "نسخة حوّش الاحتياطية";
 const BIOMETRIC_REASON = "لفتح بياناتك";
-const BIOMETRIC_CANCEL = "استخدم الرمز";
+const BIOMETRIC_CANCEL = "إلغاء";
 
 export function isNativeApp(capacitor = globalThis.Capacitor) {
   try { return capacitor?.isNativePlatform?.() === true; } catch { return false; }
@@ -93,7 +93,7 @@ export function createPrefs({ plugin, storage = globalThis.localStorage } = {}) 
   };
 }
 
-/* ---------- Face ID / Touch ID: اختصار فوق الرمز، مو بديل عنه ---------- */
+/* ---------- Face ID / Touch ID: الطريقة الوحيدة للقفل (ما فيه رمز داخل التطبيق) ---------- */
 const NO_BIOMETRY = Object.freeze({ available: false, biometryType: "none", reason: "" });
 
 export function biometryName(info) {
@@ -101,18 +101,21 @@ export function biometryName(info) {
 }
 
 export function createBiometricLock({ plugin, prefs, hooks, now = () => Date.now(), graceMs = LOCK_GRACE_MS } = {}) {
-  let enabled = false;
   let info = NO_BIOMETRY;
   let inFlight = false;
   let hiddenAt = null;
+  let lastFailed = false;
 
   const api = {
-    get enabled() { return enabled; },
+    /* القفل مفعّل = في سجل قفل بالتطبيق (app.js يملكه) */
+    get enabled() { return hooks.hasLock(); },
     get info() { return info; },
     get busy() { return inFlight; },
+    get lastFailed() { return lastFailed; },
     async init() {
-      enabled = (await prefs.get(PREF_BIOMETRIC)) === "1";
       await api.refreshInfo();
+      // المفتاح القديم (البصمة فوق الرمز) ما عاد له دور: القفل نفسه صار هو البصمة
+      try { await prefs.set(PREF_BIOMETRIC, hooks.hasLock() ? "1" : "0"); } catch { /* مو مهم */ }
     },
     async refreshInfo() {
       if (!plugin) { info = NO_BIOMETRY; return info; }
@@ -122,8 +125,7 @@ export function createBiometricLock({ plugin, prefs, hooks, now = () => Date.now
       } catch { info = NO_BIOMETRY; }
       return info;
     },
-    /* يشتغل فقط لو فيه رمز قفل: بدون الرمز ما فيه احتياط لو فشلت البصمة */
-    usable() { return enabled && info.available && hooks.hasPin(); },
+    usable() { return info.available && hooks.hasLock(); },
     async authenticate() {
       if (!plugin || inFlight) return false;
       inFlight = true;
@@ -134,29 +136,31 @@ export function createBiometricLock({ plugin, prefs, hooks, now = () => Date.now
       } catch { return false; } finally { inFlight = false; }
     },
     async tryUnlock() {
-      if (!api.usable() || inFlight || !hooks.isLocked()) return false;
-      if (!(await api.authenticate())) return false;
-      if (!hooks.isLocked()) return true; // انفتح بالرمز وإحنا ننتظر
+      if (inFlight || !hooks.isLocked()) return false;
+      inFlight = true;
+      try { await api.refreshInfo(); } finally { inFlight = false; }
+      if (!api.usable()) { lastFailed = true; hooks.lockStatusChanged?.(); return false; }
+      const ok = await api.authenticate();
+      lastFailed = !ok;
+      if (!ok) { hooks.lockStatusChanged?.(); return false; }
+      if (!hooks.isLocked()) return true;
       hooks.unlock();
       return true;
     },
+    /* التشغيل والإيقاف كلاهم يطلبون البصمة: نتأكد إنها تشتغل قبل ما نعتمد عليها، وما أحد يشيل القفل بدونها */
     async setEnabled(on) {
-      if (!on) { enabled = false; await prefs.set(PREF_BIOMETRIC, "0"); return { ok: true }; }
-      if (!hooks.hasPin()) return { ok: false, reason: "no-pin" };
       await api.refreshInfo();
       if (!info.available) return { ok: false, reason: "unavailable", detail: info.reason };
-      // نجرّب مرة وحدة الحين: إذن Face ID يطلع هنا (مو عند فتح التطبيق) ونتأكد إنه يشتغل قبل ما نعتمد عليه
       if (!(await api.authenticate())) return { ok: false, reason: "failed" };
-      enabled = true;
-      await prefs.set(PREF_BIOMETRIC, "1");
+      if (!hooks.setLock(on)) return { ok: false, reason: "storage" };
       return { ok: true };
     },
     onBackground() { hiddenAt = now(); },
-    /* نفس قاعدة القفل الحالية (30 ثانية)، ونتأكد منها هنا لأن visibilitychange مو مضمون في الغلاف */
+    /* نفس قاعدة القفل (30 ثانية)، ونتأكد منها هنا لأن visibilitychange مو مضمون في الغلاف */
     async onForeground() {
       const since = hiddenAt;
       hiddenAt = null;
-      if (hooks.hasPin() && shouldRelock({ hiddenAtMs: since, nowMs: now(), graceMs })) hooks.lock();
+      if (hooks.hasLock() && shouldRelock({ hiddenAtMs: since, nowMs: now(), graceMs })) hooks.lock();
       return api.tryUnlock();
     }
   };
@@ -454,28 +458,36 @@ export function mountNativeUI({ doc = globalThis.document, win = globalThis, hoo
   let privacyDialog = null;
 
   function renderLock() {
+    const info = biometric.info;
+    const name = biometryName(info);
     const button = $("#lock-biometric");
-    if (!button) return;
-    button.hidden = !biometric.usable();
-    button.textContent = `فتح بـ ${biometryName(biometric.info)}`;
+    if (button) { button.hidden = false; button.textContent = `فتح بـ ${name}`; }
+    const error = $("#lock-error");
+    if (error && hooks.isLocked()) {
+      error.textContent = !biometric.lastFailed ? ""
+        : !info.available
+          ? `${name} مو متاح الحين. افتح قفل الآيفون برمزه، وتأكد إن ${name} مفعّل لحوّش من إعدادات الآيفون، وارجع.`
+          : `ما انفتح. اضغط «فتح بـ ${name}» وجرّب مرة ثانية.`;
+    }
+    const settingsButton = $("#lock-ios-settings");
+    if (settingsButton) settingsButton.hidden = !(biometric.lastFailed && !info.available);
   }
 
   function renderSettings() {
     const info = biometric.info;
     const name = biometryName(info);
-    const hasPin = hooks.hasPin();
     const bio = $("#biometric-toggle");
     if (bio) {
       bio.checked = biometric.enabled;
-      bio.disabled = !biometric.enabled && (!info.available || !hasPin);
+      bio.disabled = !biometric.enabled && !info.available;
     }
-    setText("#biometric-title", info.available ? `فتح التطبيق بـ ${name}` : "فتح التطبيق بالبصمة");
-    setText("#biometric-label", info.available ? `استخدم ${name} مع الرمز` : "Face ID أو Touch ID");
+    setText("#biometric-title", info.available ? `قفل التطبيق بـ ${name}` : "قفل التطبيق بالبصمة");
+    setText("#biometric-label", info.available ? `اطلب ${name} لفتح حوّش` : "Face ID أو Touch ID");
     setText("#biometric-hint", !info.available
       ? "جهازك ما عنده Face ID أو Touch ID مفعّل. فعّله من إعدادات الآيفون وارجع هنا."
-      : !hasPin
-        ? `فعّل القفل بالرمز من قسم «الحماية» أول. بعدها يصير ${name} طريقة أسرع لفتح التطبيق، والرمز يبقى احتياط.`
-        : `يطلب ${name} لما تفتح التطبيق أو ترجع له بعد 30 ثانية. إذا ما اشتغل أو ألغيته، تكتب الرمز.`);
+      : biometric.enabled
+        ? `يطلب ${name} لما تفتح التطبيق أو ترجع له بعد 30 ثانية. ما فيه رمز ثاني.`
+        : `شغّله عشان ما أحد يفتح حوّش غيرك. الفتح يكون بـ ${name} بس.`);
     renderReminders();
     renderLock();
   }
@@ -498,10 +510,10 @@ export function mountNativeUI({ doc = globalThis.document, win = globalThis, hoo
     toggle.disabled = true;
     const result = await biometric.setEnabled(toggle.checked);
     if (!result.ok) {
-      toggle.checked = false;
-      hooks.toast(result.reason === "no-pin" ? "فعّل القفل بالرمز أول" : result.reason === "unavailable" ? "Face ID غير مفعّل على هذا الجهاز" : "ما تأكدنا من البصمة، جرب مرة ثانية");
+      toggle.checked = biometric.enabled;
+      hooks.toast(result.reason === "unavailable" ? "Face ID غير مفعّل على هذا الجهاز" : result.reason === "storage" ? "ما قدرت أحفظ الإعداد على الجهاز" : "ما تأكدنا من البصمة، جرب مرة ثانية");
     } else {
-      hooks.toast(biometric.enabled ? `تم تفعيل ${biometryName(biometric.info)}` : "تم إيقاف فتح التطبيق بالبصمة");
+      hooks.toast(biometric.enabled ? `تم تفعيل القفل بـ ${biometryName(biometric.info)}` : "تم إيقاف القفل");
     }
     renderSettings();
   }
@@ -569,7 +581,7 @@ export function mountNativeUI({ doc = globalThis.document, win = globalThis, hoo
   }
 
   function setPrivate(on) {
-    if (on && !hooks.hasPin()) return;
+    if (on && !hooks.hasLock()) return;
     doc.body.classList.toggle("is-private", on);
   }
 
@@ -581,7 +593,8 @@ export function mountNativeUI({ doc = globalThis.document, win = globalThis, hoo
       $("#biometric-toggle")?.addEventListener("change", onBiometricToggle);
       $("#reminders-toggle")?.addEventListener("change", onRemindersToggle);
       $("#open-ios-settings")?.addEventListener("click", () => { openIosSettings?.(); });
-      $("#lock-biometric")?.addEventListener("click", () => { biometric.tryUnlock(); });
+      $("#lock-biometric")?.addEventListener("click", () => { biometric.tryUnlock().then(renderLock, renderLock); });
+      $("#lock-ios-settings")?.addEventListener("click", () => { openIosSettings?.(); });
       doc.addEventListener("click", onLinkClick, true);
     }
   };
@@ -638,6 +651,7 @@ export function createNativeBridge(hooks, { capacitor = globalThis.Capacitor, st
       await reminders.refreshPermission();
       ui.renderSettings();
       if (hooks.isLocked()) await biometric.tryUnlock();
+      ui.renderLock();
       if (reminders.enabled) reminders.reschedule({ force: true }).catch(() => {});
       mirror.stateChanged();
     },
