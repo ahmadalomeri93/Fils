@@ -88,10 +88,15 @@ jobs:
           # رقم الفريق مو سر (يطلع بصفحة المطور)، فله قيمة افتراضية
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID || 'J7T6VDASDB' }}
         run: |
-          mkdir -p ~/private_keys
-          echo "$ASC_KEY_P8" > ~/private_keys/AuthKey_$ASC_KEY_ID.p8
+          # المسافات أو الأسطر الزايدة بالأسرار (من النسخ واللصق) تكسر المسار، فننظفها
+          ASC_KEY_ID="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
+          ASC_ISSUER_ID="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
+          test -n "$ASC_KEY_ID" && test -n "$ASC_ISSUER_ID" && test -n "$ASC_KEY_P8" || { echo "::error::App Store Connect secrets are missing or empty"; exit 1; }
+          mkdir -p "$HOME/private_keys"
+          KEY_PATH="$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY_PATH"
           cd ios
-          AUTH="-allowProvisioningUpdates -authenticationKeyPath $HOME/private_keys/AuthKey_$ASC_KEY_ID.p8 -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
+          AUTH="-allowProvisioningUpdates -authenticationKeyPath $KEY_PATH -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
           xcodebuild -project Hawwesh.xcodeproj -scheme Hawwesh -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/Hawwesh.xcarchive \
             APPLE_TEAM_ID=$APPLE_TEAM_ID CURRENT_PROJECT_VERSION=${{ github.run_number }} \
@@ -108,4 +113,4 @@ jobs:
           PLIST
           xcodebuild -exportArchive -archivePath build/Hawwesh.xcarchive -exportOptionsPlist build/export.plist \
             -exportPath build/export $AUTH | tail -20
-          rm -f ~/private_keys/AuthKey_$ASC_KEY_ID.p8
+          rm -f "$KEY_PATH"
