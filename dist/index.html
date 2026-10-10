@@ -258,6 +258,7 @@
       <div class="invest-tabs" role="group" aria-label="الاستثمار"><button type="button" class="active" aria-current="page" data-target-view="investment">الأسهم</button><button type="button" data-target-view="gold">الذهب</button></div>
       <section class="panel stock-portfolio-panel">
         <div class="section-heading"><div><span class="eyebrow">محفظة الأسهم الكويتية</span><h2>القيمة والربح أو الخسارة</h2></div><span class="pill" id="stock-holdings-count">لا توجد أسهم</span></div>
+        <div class="stock-refresh-row web-only"><button type="button" class="secondary" id="stock-refresh" data-action="refresh-stock-prices">↻ تحديث الأسعار</button><small class="hint" id="stock-refresh-note">يجيب آخر سعر لأسهمك من بورصة الكويت (قد يتأخر حتى 15 دقيقة).</small></div>
         <div class="metric-grid stock-portfolio-summary">
           <article class="metric featured"><span>إجمالي التكلفة</span><strong id="stock-total-cost">0.000 د.ك</strong></article>
           <article class="metric"><span>القيمة الحالية</span><strong id="stock-current-value">0.000 د.ك</strong></article>
@@ -266,7 +267,7 @@
         </div>
         <div class="stock-source-note">
           <span>مصدر السعر</span>
-          <p>حدّث السعر من شاشة بورصة الكويت الرسمية. بيانات الشاشة متأخرة 15 دقيقة، ويحفظ حوّش وقت آخر تحديث تدخله.</p>
+          <p><span class="web-only">اضغط «↻ تحديث الأسعار» ليجيب حوّش آخر سعر لأسهمك (مصدره Yahoo Finance وغير رسمي، ويتأخر حتى 15 دقيقة)، أو انقل السعر بيدك من الشاشة الرسمية. تحت كل سهم يظهر مصدر سعره ووقته.</span><span class="native-only">حدّث السعر من شاشة بورصة الكويت الرسمية. بيانات الشاشة متأخرة 15 دقيقة، ويحفظ حوّش وقت آخر تحديث تدخله.</span></p>
           <a href="https://www.boursakuwait.com.kw/ar/securities/prices-and-screens/market-watch" target="_blank" rel="noopener">فتح شاشة السوق الرسمية ↗</a>
         </div>
         <div id="stock-list" class="card-list stock-list"></div>
@@ -595,7 +596,7 @@
         <div><span>الربح / الخسارة</span><strong id="stock-preview-profit">—</strong></div>
       </div>
       <div class="stock-source-note compact">
-        <p>السعر لا يتحدث تلقائياً. افتح الشاشة الرسمية وانقل آخر سعر ظاهر؛ بياناتها متأخرة 15 دقيقة.</p>
+        <p><span class="web-only">تقدر تجيب السعر من «↻ تحديث الأسعار» بصفحة الأسهم، أو تنقله بيدك:</span><span class="native-only">السعر لا يتحدث تلقائياً.</span> افتح الشاشة الرسمية وانقل آخر سعر ظاهر؛ بياناتها متأخرة 15 دقيقة.</p>
         <a href="https://www.boursakuwait.com.kw/ar/securities/prices-and-screens/market-watch" target="_blank" rel="noopener">فتح بورصة الكويت ↗</a>
       </div>
       <p class="form-error" id="stock-error" role="alert"></p>
