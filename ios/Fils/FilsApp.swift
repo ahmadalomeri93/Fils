@@ -44,6 +44,9 @@ struct FilsWebView: UIViewRepresentable {
         webView.allowsBackForwardNavigationGestures = false
         context.coordinator.webView = webView
         features.webView = webView
+        if SmokeReport.enabled {
+            content.addUserScript(WKUserScript(source: SmokeReport.errorCollector, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         features.lockOnLaunchIfNeeded()
         webView.load(URLRequest(url: URL(string: "\(BundleSchemeHandler.scheme)://fils/index.html")!))
         return webView
@@ -56,6 +59,10 @@ struct FilsWebView: UIViewRepresentable {
         let features = NativeFeatures()
         weak var webView: WKWebView?
         private var downloadURLs: [ObjectIdentifier: URL] = [:]
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { SmokeReport.capture(webView) }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { SmokeReport.write(["navigationError": "\(error)"]) }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { SmokeReport.write(["navigationError": "\(error)"]) }
 
         // الروابط الخارجية (مثل بورصة الكويت) تنفتح بـSafari، وتصدير النسخة الاحتياطية ينزل كملف.
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, preferences: WKWebpagePreferences, decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
@@ -129,10 +136,10 @@ struct FilsWebView: UIViewRepresentable {
     }
 }
 
-// يقدّم ملفات الموقع المضمّنة (مجلد web داخل التطبيق) بأنواع MIME الصحيحة.
+// يقدّم ملفات الموقع المضمّنة (مجلد dist داخل التطبيق) بأنواع MIME الصحيحة.
 final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "app"
-    private let root = Bundle.main.resourceURL!.appendingPathComponent("web", isDirectory: true)
+    private let root = Bundle.main.resourceURL!.appendingPathComponent("dist", isDirectory: true)
 
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
         guard let url = task.request.url else { return }
@@ -172,5 +179,53 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
         case "wasm": return "application/wasm"
         default: return UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
         }
+    }
+}
+
+
+// فحص دخان للبناء الآلي فقط (GitHub Actions): لو فُتح التطبيق بالوسيط -smoke يكتب حالة الصفحة بعد التحميل
+// بملف Documents/smoke.json عشان يقرأه الـworkflow. بدون الوسيط ما يسوي شي.
+enum SmokeReport {
+    static var enabled: Bool { ProcessInfo.processInfo.arguments.contains("-smoke") }
+
+    static let errorCollector = """
+    window.__smokeErrors = [];
+    window.addEventListener('error', function (e) { window.__smokeErrors.push(String(e.message) + ' @' + String(e.filename || '') + ':' + String(e.lineno || 0)); });
+    window.addEventListener('unhandledrejection', function (e) { window.__smokeErrors.push('rejection: ' + String(e.reason)); });
+    """
+
+    private static let probe = """
+    (function () {
+      var ls; try { localStorage.setItem('__smoke', '1'); ls = localStorage.getItem('__smoke') === '1'; localStorage.removeItem('__smoke'); } catch (e) { ls = String(e); }
+      var disp = function (sel) { var el = document.querySelector(sel); return el ? getComputedStyle(el).display : 'missing'; };
+      var active = document.querySelector('.view.active');
+      return JSON.stringify({
+        title: document.title, url: location.href, activeView: active ? active.id : null,
+        bodyTextLength: document.body ? document.body.innerText.length : 0,
+        localStorageWorks: ls, bridge: !!window.__hawwesh,
+        assistantNavDisplay: disp('[data-target="assistant"]'), assistantViewDisplay: disp('#assistant-view'),
+        webOnlyShown: Array.prototype.filter.call(document.querySelectorAll('.web-only'), function (el) { return getComputedStyle(el).display !== 'none'; }).length,
+        errors: window.__smokeErrors || []
+      });
+    })()
+    """
+
+    static func capture(_ webView: WKWebView) {
+        guard enabled else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            webView.evaluateJavaScript(probe) { result, error in
+                if let text = result as? String { write(raw: text) } else { write(["probeError": "\(String(describing: error))"]) }
+            }
+        }
+    }
+
+    static func write(_ info: [String: String]) {
+        guard enabled, let data = try? JSONSerialization.data(withJSONObject: info), let text = String(data: data, encoding: .utf8) else { return }
+        write(raw: text)
+    }
+
+    private static func write(raw text: String) {
+        guard enabled, let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        try? text.write(to: dir.appendingPathComponent("smoke.json"), atomically: true, encoding: .utf8)
     }
 }
