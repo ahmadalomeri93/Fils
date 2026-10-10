@@ -58,7 +58,16 @@
     document.getElementById("app-update")?.closest("section")?.remove();
   }
 
-  function init() { addSettings(); hideWebUpdate(); snapshot(); }
+  // نسخة الآيفون بدون المحاسب الذكي وبدون عناصر الويب (تثبيت من Safari، تحديث الكاش…)
+  function hideWebOnly() {
+    const style = document.createElement("style");
+    style.textContent = ".web-only, #assistant-view, [data-target=\"assistant\"] { display: none !important; }";
+    document.head.append(style);
+    if (location.hash === "#assistant") location.hash = "#dashboard";
+    window.addEventListener("hashchange", () => { if (location.hash === "#assistant") location.hash = "#dashboard"; });
+  }
+
+  function init() { hideWebOnly(); addSettings(); hideWebUpdate(); snapshot(); }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();
