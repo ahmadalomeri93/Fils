@@ -103,6 +103,11 @@ jobs:
                   builds_in = [x["attributes"].get("version") for x in gb.get("data", [])]
                   testers = ["%s (%s, %s)" % (mask(t["attributes"].get("email")), t["attributes"].get("inviteType"), t["attributes"].get("state")) for t in gt.get("data", [])]
                   print("  group %r internal=%s all-builds=%s | builds in group=%s | testers=%s" % (ga.get("name"), ga.get("isInternalGroup"), ga.get("hasAccessToAllBuilds"), builds_in, testers))
+              code, users = call("/v1/users?limit=50")
+              print("App Store Connect users: HTTP %d" % code)
+              for u in users.get("data", []):
+                  ua = u["attributes"]
+                  print("  user %s | roles=%s | all-apps=%s | provisioning=%s" % (mask(ua.get("username")), ua.get("roles"), ua.get("allAppsVisible"), ua.get("provisioningAllowed")))
           except Exception as e:
               print("TestFlight status could not be read: %s: %s" % (type(e).__name__, e))
           PY
