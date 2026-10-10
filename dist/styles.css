@@ -1068,3 +1068,8 @@ dialog.native-doc-dialog { width: min(calc(100% - 16px), 720px); max-height: 92v
 .pay-options { display: grid; gap: 10px; }
 .pay-options .primary, .pay-options .secondary, .pay-options .ghost { min-height: 48px; }
 .pay-options .ghost { border: 1px solid var(--line); background: var(--card); }
+
+/* صفحة الأسهم: زر «تحديث الأسعار» */
+.stock-refresh-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 4px 0 12px; }
+.stock-refresh-row .secondary { min-height: 44px; }
+.stock-refresh-row small { flex: 1 1 180px; min-width: 0; }
