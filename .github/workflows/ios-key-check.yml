@@ -1,0 +1,78 @@
+# يفحص مفتاح App Store Connect مباشرة مع Apple (بدون بناء): هل المفتاح مقبول، وهل التطبيق com.yusfco.hawwesh موجود.
+# يطبع بس نتائج وصفية (أطوال، وكود رد Apple)، ما يطبع شي من الأسرار.
+name: Apple key check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios-app]
+    paths: [".github/workflows/ios-key-check.yml"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      KEY_ID: ${{ secrets.ASC_KEY_ID || secrets.APP_STORE_CONNECT_KEY_ID }}
+      ISSUER_ID: ${{ secrets.ASC_ISSUER_ID || secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      KEY_P8: ${{ secrets.ASC_KEY_P8 || secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+      HAS_ASC_KEY_ID: ${{ secrets.ASC_KEY_ID != '' }}
+      HAS_ASC_ISSUER: ${{ secrets.ASC_ISSUER_ID != '' }}
+      HAS_ASC_P8: ${{ secrets.ASC_KEY_P8 != '' }}
+      HAS_LONG_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID != '' }}
+      HAS_LONG_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID != '' }}
+      HAS_LONG_P8: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY != '' }}
+    steps:
+      - name: Ask Apple about the key
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess, sys, tempfile, textwrap, time, urllib.request, urllib.error
+
+          def b64u(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+          key_id = re.sub(r"\s+", "", os.environ.get("KEY_ID", ""))
+          issuer = re.sub(r"\s+", "", os.environ.get("ISSUER_ID", ""))
+          raw = os.environ.get("KEY_P8", "").replace("\\n", "\n")
+          body = re.sub(r"\s+", "", re.sub(r"-----(BEGIN|END)[A-Z ]*-----", "", raw))
+
+          print("secrets present: ASC_KEY_ID=%s ASC_ISSUER_ID=%s ASC_KEY_P8=%s | APP_STORE_CONNECT_KEY_ID=%s _ISSUER_ID=%s _PRIVATE_KEY=%s" % (
+              os.environ["HAS_ASC_KEY_ID"], os.environ["HAS_ASC_ISSUER"], os.environ["HAS_ASC_P8"],
+              os.environ["HAS_LONG_KEY_ID"], os.environ["HAS_LONG_ISSUER"], os.environ["HAS_LONG_P8"]))
+          print("key id: length=%d (Apple key ids have 10), only A-Z0-9=%s" % (len(key_id), bool(re.fullmatch(r"[A-Z0-9]+", key_id))))
+          print("issuer id: length=%d (a UUID has 36), looks like UUID=%s" % (len(issuer), bool(re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", issuer))))
+          print("p8: begin line=%s end line=%s base64 chars=%d (a key has 184)" % ("BEGIN PRIVATE KEY" in raw, "END PRIVATE KEY" in raw, len(body)))
+
+          pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(textwrap.wrap(body, 64)) + "\n-----END PRIVATE KEY-----\n"
+          kf = tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False); kf.write(pem); kf.close()
+          if subprocess.run(["openssl", "pkey", "-in", kf.name, "-noout"], capture_output=True).returncode != 0:
+              print("RESULT: the p8 secret does not parse as a private key"); sys.exit(1)
+
+          now = int(time.time())
+          head = b64u(json.dumps({"alg": "ES256", "kid": key_id, "typ": "JWT"}, separators=(",", ":")).encode())
+          pay = b64u(json.dumps({"iss": issuer, "iat": now, "exp": now + 600, "aud": "appstoreconnect-v1"}, separators=(",", ":")).encode())
+          sig_der = subprocess.run(["openssl", "dgst", "-sha256", "-sign", kf.name], input=(head + "." + pay).encode(), capture_output=True, check=True).stdout
+          # DER ECDSA signature -> raw r||s (32 bytes each)
+          i = 2 + (sig_der[1] - 0x80 if sig_der[1] & 0x80 else 0)
+          rlen = sig_der[i + 1]; r = sig_der[i + 2:i + 2 + rlen]; j = i + 2 + rlen
+          slen = sig_der[j + 1]; s = sig_der[j + 2:j + 2 + slen]
+          sig = r.lstrip(b"\0").rjust(32, b"\0") + s.lstrip(b"\0").rjust(32, b"\0")
+          token = head + "." + pay + "." + b64u(sig)
+
+          def call(path):
+              req = urllib.request.Request("https://api.appstoreconnect.apple.com" + path, headers={"Authorization": "Bearer " + token})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp: return resp.status, json.loads(resp.read() or b"{}")
+              except urllib.error.HTTPError as e:
+                  try: return e.code, json.loads(e.read() or b"{}")
+                  except Exception: return e.code, {}
+
+          code, data = call("/v1/apps?limit=200")
+          if code == 200:
+              apps = [(a["attributes"].get("name"), a["attributes"].get("bundleId")) for a in data.get("data", [])]
+              print("RESULT: Apple ACCEPTS the key (HTTP 200). Apps on the account: %s" % apps)
+          else:
+              errs = [(e.get("code"), e.get("title"), e.get("detail")) for e in data.get("errors", [])]
+              print("RESULT: Apple REFUSES the key: HTTP %d %s" % (code, errs))
+              sys.exit(1)
+          code, data = call("/v1/bundleIds?filter%5Bidentifier%5D=com.yusfco.hawwesh")
+          print("bundle id com.yusfco.hawwesh registered: HTTP %d, matches=%d" % (code, len(data.get("data", []))))
+          PY
