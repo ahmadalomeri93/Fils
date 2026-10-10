@@ -29,15 +29,15 @@ jobs:
           brew install xcodegen
           cd ios && xcodegen generate
 
+      # البناء للمحاكي والفحوصات تشتغل دايماً، وبعدها فقط الأرشفة والرفع (لو الأسرار موجودة): ما يطلع لـTestFlight شي ما انفحص
       - name: Build for simulator (check it compiles)
-        if: env.HAS_APPLE_KEY != 'true'
         run: |
           cd ios
           xcodebuild -project Hawwesh.xcodeproj -scheme Hawwesh -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build | tail -20
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} build | tail -20
 
-      - name: Check what is inside the app (privacy manifest and website files)
-        if: env.HAS_APPLE_KEY != 'true'
+      - name: Check what is inside the app (privacy manifest, website files, build number)
         run: |
           app="$(find ios/build/dd -type d -name 'Hawwesh.app' | head -1)"
           test -n "$app" || { echo "::error::Hawwesh.app was not built"; exit 1; }
@@ -45,10 +45,13 @@ jobs:
           plutil -lint "$app/PrivacyInfo.xcprivacy"
           test -f "$app/dist/index.html" || { echo "::error::dist/index.html is not inside the app (the app would open blank)"; exit 1; }
           test -f "$app/native-bridge.js" || { echo "::error::native-bridge.js is not inside the app"; exit 1; }
+          version="$(plutil -extract CFBundleVersion raw "$app/Info.plist")"
+          short="$(plutil -extract CFBundleShortVersionString raw "$app/Info.plist")"
+          echo "::notice title=version::CFBundleVersion=$version CFBundleShortVersionString=$short"
+          test "$version" = "${{ github.run_number }}" || { echo "::error::CFBundleVersion is $version, not the run number ${{ github.run_number }} (every TestFlight upload would be refused as a duplicate)"; exit 1; }
           echo "App bundle OK: $app"
 
       - name: Open the app in the iPhone simulator and read the page state (smoke test)
-        if: env.HAS_APPLE_KEY != 'true'
         run: |
           app="$(find ios/build/dd -type d -name 'Hawwesh.app' | head -1)"
           device="$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in sorted(d.items(), reverse=True) if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")"
@@ -73,6 +76,8 @@ jobs:
               if r.get("errors"): problems.append("page errors: %s" % r["errors"])
               if r.get("assistantNavDisplay") not in ("none", "missing") or r.get("assistantViewDisplay") not in ("none", "missing"): problems.append("the AI accountant is not hidden: %s / %s" % (r.get("assistantNavDisplay"), r.get("assistantViewDisplay")))
               if r.get("webOnlyShown", 0) > 0: problems.append("web-only elements are shown: %s" % r["webOnlyShown"])
+              if r.get("nativeSection") is not True: problems.append("the iPhone settings section was not added (native-bridge.js did not run)")
+              if r.get("nativeOnlyShown") != r.get("nativeOnlyTotal"): problems.append("native-only sentences are hidden: %s of %s shown" % (r.get("nativeOnlyShown"), r.get("nativeOnlyTotal")))
           if problems:
               print("::error::" + "; ".join(problems)); sys.exit(1)
           print("smoke test passed")
@@ -114,6 +119,9 @@ jobs:
             APPLE_TEAM_ID=$APPLE_TEAM_ID DEVELOPMENT_TEAM=$APPLE_TEAM_ID CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             CODE_SIGNING_ALLOWED=NO \
             $AUTH archive | tail -20
+          archived="$(plutil -extract CFBundleVersion raw build/Hawwesh.xcarchive/Products/Applications/Hawwesh.app/Info.plist)"
+          echo "::notice title=archive-version::CFBundleVersion=$archived"
+          test "$archived" = "${{ github.run_number }}" || { echo "::error::The archive has CFBundleVersion $archived, not ${{ github.run_number }}"; exit 1; }
           cat > build/export.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

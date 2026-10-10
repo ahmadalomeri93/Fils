@@ -41,7 +41,7 @@ struct FilsWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.contentInsetAdjustmentBehavior = .never
-        webView.allowsBackForwardNavigationGestures = false
+        webView.allowsBackForwardNavigationGestures = true
         context.coordinator.webView = webView
         features.webView = webView
         if SmokeReport.enabled {
@@ -71,12 +71,26 @@ struct FilsWebView: UIViewRepresentable {
                 return
             }
             guard let url = action.request.url else { decisionHandler(.cancel, preferences); return }
+            if url.scheme == BundleSchemeHandler.scheme && action.targetFrame == nil {
+                // رابط يطلب نافذة جديدة (مثل «اقرأ سياسة الخصوصية»): التطبيق ما عنده نوافذ، فنفتحه بنفس الصفحة
+                webView.load(action.request)
+                decisionHandler(.cancel, preferences)
+                return
+            }
             if url.scheme == BundleSchemeHandler.scheme || url.scheme == "blob" || url.scheme == "data" || url.scheme == "about" {
                 decisionHandler(.allow, preferences)
             } else {
                 UIApplication.shared.open(url)
                 decisionHandler(.cancel, preferences)
             }
+        }
+
+        // window.open و target=_blank اللي ما مرّت من فوق
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if let url = navigationAction.request.url {
+                if url.scheme == BundleSchemeHandler.scheme { webView.load(navigationAction.request) } else { UIApplication.shared.open(url) }
+            }
+            return nil
         }
 
         func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
@@ -96,12 +110,27 @@ struct FilsWebView: UIViewRepresentable {
         }
 
         func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
-            downloadURLs.removeValue(forKey: ObjectIdentifier(download))
+            if let url = downloadURLs.removeValue(forKey: ObjectIdentifier(download)) { try? FileManager.default.removeItem(at: url) }
+            notify("النسخة الاحتياطية ما انحفظت. اضغط «تصدير نسخة» وجرّب مرة ثانية.")
+        }
+
+        // الصفحة تقول «تم تجهيز النسخة» قبل لا تنفتح قائمة الحفظ، فإذا انلغت أو فشلت نقول للمستخدم بوضوح
+        private func notify(_ message: String) {
+            present(UIAlertController(title: nil, message: message, preferredStyle: .alert), actions: [UIAlertAction(title: "تم", style: .default)], fallback: {})
         }
 
         private func shareFile(_ url: URL) {
-            guard let webView, let root = webView.window?.rootViewController else { return }
+            guard let webView, let root = webView.window?.rootViewController else {
+                try? FileManager.default.removeItem(at: url)
+                notify("ما قدرت أفتح قائمة الحفظ. اضغط «تصدير نسخة» وجرّب مرة ثانية.")
+                return
+            }
             let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            // الملف فيه كل بياناتك المالية بنص صريح: يُحذف من مجلد التطبيق المؤقت بمجرد ما تنتهي المشاركة
+            sheet.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                try? FileManager.default.removeItem(at: url)
+                if !completed { self?.notify("النسخة الاحتياطية ما انحفظت. اضغط «تصدير نسخة» واختر مكان الحفظ (مثل «حفظ في الملفات»).") }
+            }
             sheet.popoverPresentationController?.sourceView = webView
             sheet.popoverPresentationController?.sourceRect = CGRect(x: webView.bounds.midX, y: webView.bounds.midY, width: 0, height: 0)
             (root.presentedViewController ?? root).present(sheet, animated: true)
@@ -203,6 +232,11 @@ enum SmokeReport {
         title: document.title, url: location.href, activeView: active ? active.id : null,
         bodyTextLength: document.body ? document.body.innerText.length : 0,
         localStorageWorks: ls, bridge: !!window.__hawwesh,
+        isSecureContext: window.isSecureContext === true, cryptoSubtle: !!(window.crypto && window.crypto.subtle),
+        jsRendered: ['daily-progress', 'flow-caption', 'budget-progress'].filter(function (id) { var el = document.getElementById(id); return el && el.textContent.trim().length > 0; }).length,
+        nativeSection: !!document.getElementById('hawwesh-native'),
+        nativeOnlyShown: Array.prototype.filter.call(document.querySelectorAll('span.native-only'), function (el) { return getComputedStyle(el).display !== 'none'; }).length,
+        nativeOnlyTotal: document.querySelectorAll('span.native-only').length,
         assistantNavDisplay: disp('[data-target="assistant"]'), assistantViewDisplay: disp('#assistant-view'),
         webOnlyShown: Array.prototype.filter.call(document.querySelectorAll('.web-only'), function (el) { return getComputedStyle(el).display !== 'none'; }).length,
         errors: window.__smokeErrors || []

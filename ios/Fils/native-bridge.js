@@ -61,7 +61,8 @@
   // نسخة الآيفون بدون المحاسب الذكي وبدون عناصر الويب (تثبيت من Safari، تحديث الكاش…)
   function hideWebOnly() {
     const style = document.createElement("style");
-    style.textContent = ".web-only, #assistant-view, [data-target=\"assistant\"] { display: none !important; }";
+    // html.is-native يحطه app.js بـCapacitor بس؛ هنا ما ينحط (عشان ما تظهر أقسام Capacitor الأصلية)، فنظهر الجمل النصية native-only يدوياً
+    style.textContent = ".web-only, #assistant-view, [data-target=\"assistant\"] { display: none !important; } html:not(.is-native) span.native-only { display: inline !important; }";
     document.head.append(style);
     if (location.hash === "#assistant") location.hash = "#dashboard";
     window.addEventListener("hashchange", () => { if (location.hash === "#assistant") location.hash = "#dashboard"; });

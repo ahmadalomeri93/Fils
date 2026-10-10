@@ -42,6 +42,9 @@ targets:
       path: Fils/Info.plist
       properties:
         CFBundleDisplayName: "حوّش"
+        # بدونهم XcodeGen يكتب "1" و"1.0" ثابتين وكل رفع لـTestFlight يرفضه Apple لأنه نفس رقم البناء
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleDevelopmentRegion: ar
         CFBundleLocalizations: [ar]
         UILaunchScreen:

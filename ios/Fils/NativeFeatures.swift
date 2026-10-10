@@ -119,6 +119,8 @@ final class NativeFeatures: NSObject, WKScriptMessageHandler {
         button.titleLabel?.font = .systemFont(ofSize: 20, weight: .bold)
         button.tintColor = .white
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = "افتح حوّش"
+        blur.accessibilityViewIsModal = true
         button.addAction(UIAction { [weak self] _ in self?.unlock() }, for: .touchUpInside)
         blur.contentView.addSubview(button)
         NSLayoutConstraint.activate([
@@ -126,12 +128,15 @@ final class NativeFeatures: NSObject, WKScriptMessageHandler {
             button.centerYAnchor.constraint(equalTo: blur.contentView.centerYAnchor)
         ])
         host.addSubview(blur)
+        webView?.accessibilityElementsHidden = true
+        UIAccessibility.post(notification: .screenChanged, argument: button)
         lockView = blur
     }
 
     private func hideLock() {
         lockView?.removeFromSuperview()
         lockView = nil
+        webView?.accessibilityElementsHidden = false
     }
 
     private func authenticate(reason: String, completion: @escaping (Bool) -> Void) {
@@ -171,7 +176,7 @@ final class NativeFeatures: NSObject, WKScriptMessageHandler {
         var requests: [UNNotificationRequest] = []
 
         if let salaryDay = lastSnapshot["salaryDay"] as? Int, (1...31).contains(salaryDay) {
-            requests.append(monthly(id: "salary", day: salaryDay, hour: 9,
+            requests.append(contentsOf: monthly(id: "salary", day: salaryDay, hour: 9,
                                     title: "يوم الراتب 💰",
                                     body: "حوّش قبل لا تصرف: حط جزء للادخار أول شي."))
         }
@@ -183,24 +188,44 @@ final class NativeFeatures: NSObject, WKScriptMessageHandler {
             let fils = (loan["installmentFils"] as? Int) ?? 0
             let amount = String(format: "%.3f د.ك", Double(fils) / 1000)
             let id = (loan["id"] as? String) ?? "loan-\(index)"
-            requests.append(monthly(id: "loan-\(id)", day: day, hour: 9,
+            requests.append(contentsOf: monthly(id: "loan-\(id)", day: day, hour: 9,
                                     title: "قسط اليوم: \(name)",
                                     body: "القسط \(amount). تأكد إن رصيدك يكفي."))
         }
 
-        requests.forEach { center.add($0) }
+        // iOS يسمح بـ64 تذكير معلّق بالكثير
+        requests.prefix(60).forEach { center.add($0) }
     }
 
-    // تذكير شهري ثابت. الأيام 29–31 تنزل لـ28 عشان ما يضيع التذكير بالشهور القصيرة.
-    private func monthly(id: String, day: Int, hour: Int, title: String, body: String) -> UNNotificationRequest {
+    // الأيام 1–28 تتكرر كل شهر. الأيام 29–31 ما توجد بكل الشهور، فنجدولها للشهور الستة الجاية واحد واحد
+    // (آخر يوم بالشهر القصير مثل ما يسوي التطبيق بحساباته)، ويتجدد الجدول كل ما انفتح التطبيق.
+    // التقويم ميلادي دايماً لأن كل تواريخ حوّش ميلادية حتى لو الجهاز على التقويم الهجري.
+    private func monthly(id: String, day: Int, hour: Int, title: String, body: String) -> [UNNotificationRequest] {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        var date = DateComponents()
-        date.day = min(day, 28)
-        date.hour = hour
-        let trigger = UNCalendarNotificationTrigger(dateMatching: date, repeats: true)
-        return UNNotificationRequest(identifier: id, content: content, trigger: trigger)
+        let calendar = Calendar(identifier: .gregorian)
+        if day <= 28 {
+            var date = DateComponents(calendar: calendar)
+            date.day = day
+            date.hour = hour
+            let trigger = UNCalendarNotificationTrigger(dateMatching: date, repeats: true)
+            return [UNNotificationRequest(identifier: id, content: content, trigger: trigger)]
+        }
+        var requests: [UNNotificationRequest] = []
+        let now = Date()
+        for offset in 0..<6 {
+            guard let month = calendar.date(byAdding: .month, value: offset, to: now),
+                  let days = calendar.range(of: .day, in: .month, for: month) else { continue }
+            var date = calendar.dateComponents([.year, .month], from: month)
+            date.calendar = calendar
+            date.day = min(day, days.count)
+            date.hour = hour
+            guard let fire = calendar.date(from: date), fire > now else { continue }
+            let trigger = UNCalendarNotificationTrigger(dateMatching: date, repeats: false)
+            requests.append(UNNotificationRequest(identifier: "\(id)-\(date.year ?? 0)-\(date.month ?? 0)", content: content, trigger: trigger))
+        }
+        return requests
     }
 }
